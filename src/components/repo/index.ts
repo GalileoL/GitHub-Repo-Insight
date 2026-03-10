@@ -1,1 +1,1 @@
-export {};
+export { RepoOverview } from './RepoOverview';

@@ -1,0 +1,64 @@
+import { useMemo } from 'react';
+import { useECharts } from '../../hooks/useECharts';
+import { ChartContainer } from '../common/ChartContainer';
+import type { LanguageChartData } from '../../utils/transformers';
+import type { EChartsOption } from 'echarts';
+
+interface LanguagePieChartProps {
+  data: LanguageChartData[] | undefined;
+  loading: boolean;
+  error: Error | null;
+}
+
+export default function LanguagePieChart({ data, loading, error }: LanguagePieChartProps) {
+  const option = useMemo<EChartsOption | null>(() => {
+    if (!data) return null;
+    return {
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: '#1c2128',
+        borderColor: '#30363d',
+        textStyle: { color: '#f0f6fc' },
+        formatter: (params: any) => `${params.name}: ${params.data.percentage}%`,
+      },
+      legend: {
+        orient: 'vertical',
+        right: 10,
+        top: 'center',
+        textStyle: { color: '#8b949e' },
+      },
+      series: [
+        {
+          type: 'pie',
+          radius: ['45%', '75%'],
+          center: ['35%', '50%'],
+          avoidLabelOverlap: true,
+          itemStyle: {
+            borderRadius: 6,
+            borderColor: '#161b22',
+            borderWidth: 2,
+          },
+          label: { show: false },
+          emphasis: {
+            label: { show: true, fontSize: 14, fontWeight: 'bold', color: '#f0f6fc' },
+            itemStyle: { shadowBlur: 10, shadowColor: 'rgba(88, 166, 255, 0.3)' },
+          },
+          data: data.map((item) => ({
+            name: item.name,
+            value: item.value,
+            percentage: item.percentage,
+            itemStyle: { color: item.color },
+          })),
+        },
+      ],
+    };
+  }, [data]);
+
+  const chartRef = useECharts(option);
+
+  return (
+    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No language data">
+      <div ref={chartRef} className="h-full w-full" />
+    </ChartContainer>
+  );
+}
