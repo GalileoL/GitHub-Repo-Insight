@@ -92,6 +92,7 @@ cp .env.example .env
 | `GEMINI_API_KEY` | Google Gemini API key (required when `LLM_PROVIDER=gemini`) |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key (required when `LLM_PROVIDER=claude`) |
 | `RAG_DAILY_LIMIT` | Max questions per user per day (default: `20`) |
+| `RAG_DAILY_INGEST_LIMIT` | Max index/re-index operations per user per day (default: `5`) |
 | `ADMIN_GITHUB_USERS` | Comma-separated GitHub usernames with unlimited usage |
 
 > **Note:** The dashboard works without OAuth (limited to 60 req/hr) and without AI keys (the Ask Repo feature will be unavailable). To create an OAuth App, go to [GitHub Developer Settings](https://github.com/settings/developers). For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20).
@@ -163,7 +164,7 @@ This project is designed for **Vercel**:
 
 1. Push the repository to GitHub
 2. Import the project in [Vercel](https://vercel.com)
-3. Set the environment variables (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `VITE_GITHUB_CLIENT_ID`, `OPENAI_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, and optionally `LLM_PROVIDER`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `RAG_DAILY_LIMIT`, `ADMIN_GITHUB_USERS`)
+3. Set the environment variables (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `VITE_GITHUB_CLIENT_ID`, `OPENAI_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, and optionally `LLM_PROVIDER`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `RAG_DAILY_LIMIT`, `RAG_DAILY_INGEST_LIMIT`, `ADMIN_GITHUB_USERS`)
 4. Deploy — the `api/` directory is automatically detected as Serverless Functions
 
 ### Ask Repo Architecture

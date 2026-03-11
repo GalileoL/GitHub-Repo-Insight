@@ -3,18 +3,26 @@ import { fetchRepoData } from '../../lib/rag/github/fetchers.js';
 import { chunkRepoData } from '../../lib/rag/chunking/index.js';
 import { embedTexts } from '../../lib/rag/embeddings/index.js';
 import { upsertChunks, deleteRepoChunks } from '../../lib/rag/storage/index.js';
-import { verifyGitHubToken } from '../../lib/rag/auth/index.js';
+import { verifyGitHubToken, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // --- Auth (require login, but no rate limit for indexing) ---
+  // --- Auth (require login) ---
   const authToken = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || undefined;
   const auth = await verifyGitHubToken(authToken);
   if (!auth.authenticated) {
     return res.status(401).json({ error: auth.error });
+  }
+
+  // --- Rate limit for indexing ---
+  const rateLimit = await checkIngestRateLimit(auth.login!);
+  res.setHeader('X-RateLimit-Limit', rateLimit.limit);
+  res.setHeader('X-RateLimit-Remaining', rateLimit.remaining);
+  if (!rateLimit.allowed) {
+    return res.status(429).json({ error: rateLimit.error });
   }
 
   const { repo } = req.body ?? {};

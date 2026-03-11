@@ -3,6 +3,9 @@ import { Redis } from '@upstash/redis';
 /** Daily question limit for regular users (configurable via env) */
 const DAILY_LIMIT = Math.max(1, Number(process.env.RAG_DAILY_LIMIT) || 20);
 
+/** Daily ingest (index) limit for regular users (configurable via env) */
+const DAILY_INGEST_LIMIT = Math.max(1, Number(process.env.RAG_DAILY_INGEST_LIMIT) || 5);
+
 /** Admin users with unlimited access (GitHub login) */
 const ADMIN_USERS = new Set(
   (process.env.ADMIN_GITHUB_USERS ?? 'GalileoL').split(',').map((u) => u.trim().toLowerCase()),
@@ -94,5 +97,38 @@ export async function checkRateLimit(login: string): Promise<RateLimitResult> {
     allowed: true,
     remaining: DAILY_LIMIT - current - 1,
     limit: DAILY_LIMIT,
+  };
+}
+
+/** Check and increment the daily ingest counter for a user */
+export async function checkIngestRateLimit(login: string): Promise<RateLimitResult> {
+  if (ADMIN_USERS.has(login.toLowerCase())) {
+    return { allowed: true, remaining: Infinity, limit: Infinity };
+  }
+
+  const r = getRedis();
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `rag:ingest:${login}:${today}`;
+
+  const current = (await r.get<number>(key)) ?? 0;
+
+  if (current >= DAILY_INGEST_LIMIT) {
+    return {
+      allowed: false,
+      remaining: 0,
+      limit: DAILY_INGEST_LIMIT,
+      error: `Daily index limit reached (${DAILY_INGEST_LIMIT}/day). Try again tomorrow.`,
+    };
+  }
+
+  await r.incr(key);
+  if (current === 0) {
+    await r.expire(key, 60 * 60 * 48);
+  }
+
+  return {
+    allowed: true,
+    remaining: DAILY_INGEST_LIMIT - current - 1,
+    limit: DAILY_INGEST_LIMIT,
   };
 }
