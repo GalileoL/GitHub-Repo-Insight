@@ -25,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }),
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<string, string>;
 
     if (data.error) {
       return res.status(400).json({ error: data.error_description || data.error });
