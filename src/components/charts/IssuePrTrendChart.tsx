@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useECharts } from '../../hooks/useECharts';
 import { ChartContainer } from '../common/ChartContainer';
+import { chartColors } from '../../utils/echarts-theme';
+import { useThemeStore } from '../../store/theme';
 import type { IssuePrTrendData } from '../../utils/transformers';
 import type { EChartsOption } from 'echarts';
 
@@ -11,32 +13,34 @@ interface IssuePrTrendChartProps {
 }
 
 export default function IssuePrTrendChart({ data, loading, error }: IssuePrTrendChartProps) {
+  const themeMode = useThemeStore((s) => s.mode);
   const option = useMemo<EChartsOption | null>(() => {
     if (!data) return null;
+    const c = chartColors();
     return {
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#f0f6fc' },
+        backgroundColor: c.tooltipBg,
+        borderColor: c.tooltipBorder,
+        textStyle: { color: c.tooltipText },
       },
       legend: {
         data: ['Issues', 'Pull Requests'],
-        textStyle: { color: '#8b949e' },
+        textStyle: { color: c.axisLabel },
         top: 0,
       },
       grid: { left: 50, right: 30, top: 40, bottom: 40 },
       xAxis: {
         type: 'category',
         data: data.map((d) => d.date),
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisLabel: { color: '#8b949e', rotate: 45, fontSize: 11 },
+        axisLine: { lineStyle: { color: c.axisLine } },
+        axisLabel: { color: c.axisLabel, rotate: 45, fontSize: 11 },
       },
       yAxis: {
         type: 'value',
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisLabel: { color: '#8b949e' },
-        splitLine: { lineStyle: { color: '#21262d' } },
+        axisLine: { lineStyle: { color: c.axisLine } },
+        axisLabel: { color: c.axisLabel },
+        splitLine: { lineStyle: { color: c.splitLine } },
       },
       series: [
         {
@@ -63,21 +67,21 @@ export default function IssuePrTrendChart({ data, loading, error }: IssuePrTrend
           data: data.map((d) => d.pullRequests),
           smooth: true,
           showSymbol: false,
-          lineStyle: { color: '#bc8cff', width: 2 },
+          lineStyle: { color: '#39d2c0', width: 2 },
           areaStyle: {
             color: {
               type: 'linear',
               x: 0, y: 0, x2: 0, y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(188, 140, 255, 0.2)' },
-                { offset: 1, color: 'rgba(188, 140, 255, 0.02)' },
+                { offset: 0, color: 'rgba(57, 210, 192, 0.2)' },
+                { offset: 1, color: 'rgba(57, 210, 192, 0.02)' },
               ],
             },
           },
         },
       ],
     };
-  }, [data]);
+  }, [data, themeMode]);
 
   const chartRef = useECharts(option);
 

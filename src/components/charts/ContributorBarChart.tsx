@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useECharts } from '../../hooks/useECharts';
 import { ChartContainer } from '../common/ChartContainer';
+import { chartColors } from '../../utils/echarts-theme';
+import { useThemeStore } from '../../store/theme';
 import type { ContributorChartData } from '../../utils/transformers';
 import type { EChartsOption } from 'echarts';
 
@@ -12,35 +14,37 @@ interface ContributorBarChartProps {
 
 export default function ContributorBarChart({ data, loading, error }: ContributorBarChartProps) {
   const topContributors = useMemo(() => data?.slice(0, 10), [data]);
+  const themeMode = useThemeStore((s) => s.mode);
 
   const option = useMemo<EChartsOption | null>(() => {
     if (!topContributors) return null;
+    const c = chartColors();
     return {
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#f0f6fc' },
+        backgroundColor: c.tooltipBg,
+        borderColor: c.tooltipBorder,
+        textStyle: { color: c.tooltipText },
         axisPointer: { type: 'shadow' },
       },
       grid: { left: 100, right: 30, top: 10, bottom: 30 },
       xAxis: {
         type: 'value',
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisLabel: { color: '#8b949e' },
-        splitLine: { lineStyle: { color: '#21262d' } },
+        axisLine: { lineStyle: { color: c.axisLine } },
+        axisLabel: { color: c.axisLabel },
+        splitLine: { lineStyle: { color: c.splitLine } },
       },
       yAxis: {
         type: 'category',
-        data: topContributors.map((c) => c.login).reverse(),
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisLabel: { color: '#8b949e', fontSize: 12 },
+        data: topContributors.map((ct) => ct.login).reverse(),
+        axisLine: { lineStyle: { color: c.axisLine } },
+        axisLabel: { color: c.axisLabel, fontSize: 12 },
         axisTick: { show: false },
       },
       series: [
         {
           type: 'bar',
-          data: topContributors.map((c) => c.contributions).reverse(),
+          data: topContributors.map((ct) => ct.contributions).reverse(),
           itemStyle: {
             borderRadius: [0, 4, 4, 0],
             color: {
@@ -48,7 +52,7 @@ export default function ContributorBarChart({ data, loading, error }: Contributo
               x: 0, y: 0, x2: 1, y2: 0,
               colorStops: [
                 { offset: 0, color: '#58a6ff' },
-                { offset: 1, color: '#bc8cff' },
+                { offset: 1, color: '#39d2c0' },
               ],
             },
           },
@@ -56,7 +60,7 @@ export default function ContributorBarChart({ data, loading, error }: Contributo
         },
       ],
     };
-  }, [topContributors]);
+  }, [topContributors, themeMode]);
 
   const chartRef = useECharts(option);
 

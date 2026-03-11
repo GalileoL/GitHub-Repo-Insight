@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useECharts } from '../../hooks/useECharts';
 import { ChartContainer } from '../common/ChartContainer';
+import { chartColors } from '../../utils/echarts-theme';
+import { useThemeStore } from '../../store/theme';
 import type { CommitTrendData } from '../../utils/transformers';
 import type { EChartsOption } from 'echarts';
 
@@ -11,28 +13,30 @@ interface CommitTrendChartProps {
 }
 
 export default function CommitTrendChart({ data, loading, error }: CommitTrendChartProps) {
+  const themeMode = useThemeStore((s) => s.mode);
   const option = useMemo<EChartsOption | null>(() => {
     if (!data) return null;
+    const c = chartColors();
     return {
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#f0f6fc' },
+        backgroundColor: c.tooltipBg,
+        borderColor: c.tooltipBorder,
+        textStyle: { color: c.tooltipText },
       },
       grid: { left: 50, right: 30, top: 20, bottom: 40 },
       xAxis: {
         type: 'category',
         data: data.map((d) => d.week),
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisLabel: { color: '#8b949e', rotate: 45, fontSize: 11 },
-        axisTick: { lineStyle: { color: '#30363d' } },
+        axisLine: { lineStyle: { color: c.axisLine } },
+        axisLabel: { color: c.axisLabel, rotate: 45, fontSize: 11 },
+        axisTick: { lineStyle: { color: c.axisLine } },
       },
       yAxis: {
         type: 'value',
-        axisLine: { lineStyle: { color: '#30363d' } },
-        axisLabel: { color: '#8b949e' },
-        splitLine: { lineStyle: { color: '#21262d' } },
+        axisLine: { lineStyle: { color: c.axisLine } },
+        axisLabel: { color: c.axisLabel },
+        splitLine: { lineStyle: { color: c.splitLine } },
       },
       series: [
         {
@@ -54,7 +58,7 @@ export default function CommitTrendChart({ data, loading, error }: CommitTrendCh
         },
       ],
     };
-  }, [data]);
+  }, [data, themeMode]);
 
   const chartRef = useECharts(option);
 

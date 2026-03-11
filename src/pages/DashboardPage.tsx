@@ -99,14 +99,17 @@ export default function DashboardPage() {
       </SectionCard>
 
       <SectionCard title="Releases" description="Recent release history">
-        <Suspense fallback={<ChartSkeleton />}>
-          <ReleaseTimeline
-            data={releasesQuery.data}
-            loading={releasesQuery.isLoading}
-            error={releasesQuery.error}
-          />
-        </Suspense>
-      </SectionCard>
+          <Suspense fallback={<ChartSkeleton />}>
+            <ReleaseTimeline
+              data={releasesQuery.data?.pages.flat()}
+              loading={releasesQuery.isLoading}
+              error={releasesQuery.error}
+              hasNextPage={releasesQuery.hasNextPage}
+              isFetchingNextPage={releasesQuery.isFetchingNextPage}
+              fetchNextPage={releasesQuery.fetchNextPage}
+            />
+          </Suspense>
+        </SectionCard>
 
       <SectionCard title="Commit Heatmap" description="Daily commit activity">
         <Suspense fallback={<ChartSkeleton />}>

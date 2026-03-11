@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useECharts } from '../../hooks/useECharts';
 import { ChartContainer } from '../common/ChartContainer';
+import { chartColors } from '../../utils/echarts-theme';
+import { useThemeStore } from '../../store/theme';
 import type { LanguageChartData } from '../../utils/transformers';
 import type { EChartsOption } from 'echarts';
 
@@ -11,21 +13,23 @@ interface LanguagePieChartProps {
 }
 
 export default function LanguagePieChart({ data, loading, error }: LanguagePieChartProps) {
+  const themeMode = useThemeStore((s) => s.mode);
   const option = useMemo<EChartsOption | null>(() => {
     if (!data) return null;
+    const c = chartColors();
     return {
       tooltip: {
         trigger: 'item',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#f0f6fc' },
+        backgroundColor: c.tooltipBg,
+        borderColor: c.tooltipBorder,
+        textStyle: { color: c.tooltipText },
         formatter: (params: any) => `${params.name}: ${params.data.percentage}%`,
       },
       legend: {
         orient: 'vertical',
         right: 10,
         top: 'center',
-        textStyle: { color: '#8b949e' },
+        textStyle: { color: c.axisLabel },
       },
       series: [
         {
@@ -33,14 +37,15 @@ export default function LanguagePieChart({ data, loading, error }: LanguagePieCh
           radius: ['45%', '75%'],
           center: ['35%', '50%'],
           avoidLabelOverlap: true,
+          minAngle: 5,
           itemStyle: {
             borderRadius: 6,
-            borderColor: '#161b22',
+            borderColor: c.pieBorder,
             borderWidth: 2,
           },
           label: { show: false },
           emphasis: {
-            label: { show: true, fontSize: 14, fontWeight: 'bold', color: '#f0f6fc' },
+            label: { show: true, fontSize: 14, fontWeight: 'bold', color: c.tooltipText },
             itemStyle: { shadowBlur: 10, shadowColor: 'rgba(88, 166, 255, 0.3)' },
           },
           data: data.map((item) => ({
@@ -52,7 +57,7 @@ export default function LanguagePieChart({ data, loading, error }: LanguagePieCh
         },
       ],
     };
-  }, [data]);
+  }, [data, themeMode]);
 
   const chartRef = useECharts(option);
 

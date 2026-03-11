@@ -65,24 +65,39 @@ const LANGUAGE_COLORS: Record<string, string> = {
   Scala: '#c22d40',
   Vue: '#41b883',
   Svelte: '#ff3e00',
+  Other: '#8b949e',
 };
 
 function getLanguageColor(language: string): string {
-  return LANGUAGE_COLORS[language] || '#8b949e';
+  return LANGUAGE_COLORS[language] || LANGUAGE_COLORS['Other'];
 }
 
 export function transformLanguages(data: GitHubLanguages): LanguageChartData[] {
   const total = Object.values(data).reduce((sum, bytes) => sum + bytes, 0);
   if (total === 0) return [];
 
-  return Object.entries(data)
-    .sort(([, a], [, b]) => b - a)
-    .map(([name, bytes]) => ({
-      name,
-      value: bytes,
-      percentage: Math.round((bytes / total) * 1000) / 10,
-      color: getLanguageColor(name),
-    }));
+  const sorted = Object.entries(data).sort(([, a], [, b]) => b - a);
+  const top = sorted.slice(0, 6);
+  const rest = sorted.slice(6);
+
+  const result: LanguageChartData[] = top.map(([name, bytes]) => ({
+    name,
+    value: bytes,
+    percentage: Math.round((bytes / total) * 1000) / 10,
+    color: getLanguageColor(name),
+  }));
+
+  if (rest.length > 0) {
+    const otherBytes = rest.reduce((sum, [, bytes]) => sum + bytes, 0);
+    result.push({
+      name: 'Other',
+      value: otherBytes,
+      percentage: Math.round((otherBytes / total) * 1000) / 10,
+      color: getLanguageColor('Other'),
+    });
+  }
+
+  return result;
 }
 
 export function transformContributors(data: GitHubContributor[]): ContributorChartData[] {
@@ -103,7 +118,7 @@ export function transformCommitActivity(data: GitHubCommitActivity[]): CommitTre
 }
 
 export function transformIssuesAndPrs(issues: GitHubIssue[]): IssuePrTrendData[] {
-  if (!Array.isArray(issues)) return [];
+  if (!Array.isArray(issues) || issues.length === 0) return [];
   const grouped: Record<string, { issues: number; pullRequests: number }> = {};
 
   issues.forEach((issue) => {
@@ -116,12 +131,23 @@ export function transformIssuesAndPrs(issues: GitHubIssue[]): IssuePrTrendData[]
     }
   });
 
-  return Object.entries(grouped)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, counts]) => ({
-      date: dayjs(date).format('MMM YYYY'),
+  const months = Object.keys(grouped).sort();
+  const start = dayjs(months[0]);
+  const end = dayjs(months[months.length - 1]);
+  const result: IssuePrTrendData[] = [];
+
+  let current = start;
+  while (current.isBefore(end) || current.isSame(end, 'month')) {
+    const key = current.format('YYYY-MM');
+    const counts = grouped[key] || { issues: 0, pullRequests: 0 };
+    result.push({
+      date: current.format('MMM YYYY'),
       ...counts,
-    }));
+    });
+    current = current.add(1, 'month');
+  }
+
+  return result;
 }
 
 export function transformReleases(data: GitHubRelease[]): ReleaseTimelineData[] {

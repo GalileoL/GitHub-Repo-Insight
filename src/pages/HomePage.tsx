@@ -24,7 +24,7 @@ export default function HomePage() {
         <div className="relative">
           <h1 className="text-5xl font-bold tracking-tight text-text-primary sm:text-6xl">
             GitHub Repo{' '}
-            <span className="bg-gradient-to-r from-accent-blue to-accent-purple bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-accent-blue to-accent-teal bg-clip-text text-transparent">
               Insight
             </span>
           </h1>

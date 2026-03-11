@@ -151,21 +151,57 @@ export const githubApi = {
       params: { per_page: '20' },
     }),
 
+  getReleasesPage: (owner: string, repo: string, page: number) =>
+    githubFetch<import('../types/github').GitHubRelease[]>(`/repos/${owner}/${repo}/releases`, {
+      params: { per_page: '20', page: String(page) },
+    }),
+
   getIssues: (owner: string, repo: string, params?: Record<string, string>) =>
     githubFetch<import('../types/github').GitHubIssue[]>(`/repos/${owner}/${repo}/issues`, {
       params: { state: 'all', per_page: '100', sort: 'created', direction: 'desc', ...params },
     }),
 
-  getIssuesPaginated: async (owner: string, repo: string, pages: number = 5) => {
-    type Issue = import('../types/github').GitHubIssue;
-    const allIssues: Issue[] = [];
-    for (let page = 1; page <= pages; page++) {
-      const issues = await githubFetch<Issue[]>(`/repos/${owner}/${repo}/issues`, {
-        params: { state: 'all', per_page: '100', sort: 'created', direction: 'desc', page: String(page) },
+  getMonthlyIssuePrCounts: async (owner: string, repo: string, months: number = 12) => {
+    type SearchResult = { total_count: number };
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    const monthRanges = Array.from({ length: months }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      return {
+        key: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`,
+        start: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`,
+        end: `${lastDay.getFullYear()}-${pad(lastDay.getMonth() + 1)}-${pad(lastDay.getDate())}`,
+      };
+    });
+
+    // Fetch 2 months per batch (4 requests) with delays to stay within
+    // the Search API rate limit (30 req/min authenticated, 10 unauthenticated)
+    const batchSize = 2;
+    const allResults: Array<{ month: string; issues: number; pullRequests: number }> = [];
+
+    for (let i = 0; i < monthRanges.length; i += batchSize) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 2500));
+      const batch = monthRanges.slice(i, i + batchSize);
+      const promises = batch.flatMap((m) => [
+        githubFetch<SearchResult>('/search/issues', {
+          params: { q: `repo:${owner}/${repo} is:issue created:${m.start}..${m.end}`, per_page: '1' },
+        }),
+        githubFetch<SearchResult>('/search/issues', {
+          params: { q: `repo:${owner}/${repo} is:pr created:${m.start}..${m.end}`, per_page: '1' },
+        }),
+      ]);
+      const results = await Promise.all(promises);
+      batch.forEach((m, idx) => {
+        allResults.push({
+          month: m.key,
+          issues: results[idx * 2].total_count,
+          pullRequests: results[idx * 2 + 1].total_count,
+        });
       });
-      allIssues.push(...issues);
-      if (issues.length < 100) break; // No more pages
     }
-    return allIssues;
+
+    return allResults;
   },
 };

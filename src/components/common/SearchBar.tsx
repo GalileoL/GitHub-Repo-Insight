@@ -41,7 +41,7 @@ export function SearchBar({ size = 'default', placeholder = 'Search repository (
   return (
     <form onSubmit={handleSubmit} className="w-full">
       <div className="relative group">
-        <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-accent-blue/20 to-accent-purple/20 blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity" />
+        <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-accent-blue/20 to-accent-teal/20 blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity" />
         <div className="relative flex items-center">
           <svg
             className={`absolute left-4 text-text-muted ${isLarge ? 'h-6 w-6' : 'h-5 w-5'}`}
