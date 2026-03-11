@@ -5,6 +5,7 @@ import MainLayout from '../layouts/MainLayout';
 
 const HomePage = lazy(() => import('../pages/HomePage'));
 const DashboardPage = lazy(() => import('../pages/DashboardPage'));
+const AnalyzePage = lazy(() => import('../pages/AnalyzePage'));
 const AuthCallback = lazy(() => import('../pages/AuthCallback'));
 
 function SuspenseWrapper({ children }: { children: ReactNode }) {
@@ -30,6 +31,10 @@ export const router = createBrowserRouter([
       {
         path: '/repo/:owner/:repo',
         element: <SuspenseWrapper><DashboardPage /></SuspenseWrapper>,
+      },
+      {
+        path: '/repo/:owner/:repo/analyze',
+        element: <SuspenseWrapper><AnalyzePage /></SuspenseWrapper>,
       },
       {
         path: '/auth/callback',
