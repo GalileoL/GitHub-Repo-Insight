@@ -24,6 +24,7 @@ export default function ReleaseTimeline({
 }: ReleaseTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is safe here
   const virtualizer = useVirtualizer({
     count: data?.length ?? 0,
     getScrollElement: () => parentRef.current,

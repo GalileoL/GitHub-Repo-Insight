@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SearchBar } from '../components/common/SearchBar';
 import { EXAMPLE_REPOS } from '../constants';
 
-export default function HomePage() {
-  const [history, setHistory] = useState<string[]>([]);
+function getStoredHistory(): string[] {
+  try { return JSON.parse(localStorage.getItem('repo-history') || '[]'); }
+  catch { return []; }
+}
 
-  useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem('repo-history') || '[]');
-    setHistory(stored);
-  }, []);
+export default function HomePage() {
+  const [history, setHistory] = useState<string[]>(getStoredHistory);
 
   const clearHistory = () => {
     localStorage.removeItem('repo-history');

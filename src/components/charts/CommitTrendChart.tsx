@@ -58,6 +58,7 @@ export default function CommitTrendChart({ data, loading, error }: CommitTrendCh
         },
       ],
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- themeMode triggers CSS var changes
   }, [data, themeMode]);
 
   const chartRef = useECharts(option);

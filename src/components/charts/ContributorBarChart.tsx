@@ -60,6 +60,7 @@ export default function ContributorBarChart({ data, loading, error }: Contributo
         },
       ],
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- themeMode triggers CSS var changes
   }, [topContributors, themeMode]);
 
   const chartRef = useECharts(option);

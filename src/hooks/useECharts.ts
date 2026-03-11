@@ -36,7 +36,7 @@ export function useECharts(option: EChartsOption | null) {
   // Keep a mutable ref to the latest option so the callback ref can apply
   // it immediately when the container appears.
   const optionRef = useRef<EChartsOption | null>(option);
-  optionRef.current = option;
+  useEffect(() => { optionRef.current = option; });
 
   /**
    * Callback ref — called by React when the <div> mounts (node != null)

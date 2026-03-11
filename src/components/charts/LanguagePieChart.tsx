@@ -4,7 +4,7 @@ import { ChartContainer } from '../common/ChartContainer';
 import { chartColors } from '../../utils/echarts-theme';
 import { useThemeStore } from '../../store/theme';
 import type { LanguageChartData } from '../../utils/transformers';
-import type { EChartsOption } from 'echarts';
+import type { EChartsOption, TooltipComponentFormatterCallbackParams } from 'echarts';
 
 interface LanguagePieChartProps {
   data: LanguageChartData[] | undefined;
@@ -23,7 +23,11 @@ export default function LanguagePieChart({ data, loading, error }: LanguagePieCh
         backgroundColor: c.tooltipBg,
         borderColor: c.tooltipBorder,
         textStyle: { color: c.tooltipText },
-        formatter: (params: any) => `${params.name}: ${params.data.percentage}%`,
+        formatter: (params: TooltipComponentFormatterCallbackParams) => {
+          if (Array.isArray(params)) return '';
+          const d = params.data as { percentage?: number };
+          return `${params.name}: ${d?.percentage ?? 0}%`;
+        },
       },
       legend: {
         orient: 'vertical',
@@ -57,6 +61,7 @@ export default function LanguagePieChart({ data, loading, error }: LanguagePieCh
         },
       ],
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- themeMode triggers CSS var changes
   }, [data, themeMode]);
 
   const chartRef = useECharts(option);

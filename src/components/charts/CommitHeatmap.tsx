@@ -36,6 +36,7 @@ function getDaySuffix(day: number): string {
 
 export default function CommitHeatmap({ data, loading, error }: CommitHeatmapProps) {
   const themeMode = useThemeStore((s) => s.mode);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- themeMode triggers CSS var changes
   const colors = useMemo(() => heatmapColors(), [themeMode]);
 
   const { grid, weeks, maxCount, months } = useMemo(() => {
