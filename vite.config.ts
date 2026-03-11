@@ -15,5 +15,15 @@ export default defineConfig(({ mode }) => {
         '@': '/src',
       },
     },
+    build: {
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            echarts: ['echarts/core', 'echarts/renderers', 'echarts/charts', 'echarts/components'],
+          },
+        },
+      },
+    },
   };
 });
