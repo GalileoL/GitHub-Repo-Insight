@@ -28,7 +28,11 @@ function getRedis(): Redis | null {
 }
 
 function getChunkCountKey(repo: string): string {
-  return `rag:chunk-count:${repo.toLowerCase()}`;
+  return `rag:chunk-count:${normalizeRepo(repo)}`;
+}
+
+function normalizeRepo(repo: string): string {
+  return repo.toLowerCase();
 }
 
 export async function setRepoChunkCount(repo: string, count: number): Promise<void> {
@@ -104,6 +108,7 @@ export async function fetchAllRepoChunks(
   repo: string,
   typeFilter?: string[],
 ): Promise<ScoredChunk[]> {
+  const normalizedRepo = normalizeRepo(repo);
   const idx = getIndex();
   const results: ScoredChunk[] = [];
   let cursor = 0;
@@ -117,7 +122,7 @@ export async function fetchAllRepoChunks(
 
     for (const v of page.vectors) {
       const meta = (v.metadata ?? {}) as unknown as ChunkMetadata & { content?: string };
-      if (meta.repo !== repo) continue;
+      if (normalizeRepo(meta.repo ?? '') !== normalizedRepo) continue;
       if (typeFilter && typeFilter.length > 0 && !typeFilter.includes(meta.type)) continue;
 
       const content = meta.content ?? '';
@@ -143,6 +148,7 @@ export async function fetchAllRepoChunks(
 
 /** Delete all chunks for a repo */
 export async function deleteRepoChunks(repo: string): Promise<void> {
+  const normalizedRepo = normalizeRepo(repo);
   const idx = getIndex();
   const idsToDelete: string[] = [];
   let cursor = 0;
@@ -156,7 +162,7 @@ export async function deleteRepoChunks(repo: string): Promise<void> {
 
     for (const v of page.vectors) {
       const meta = v.metadata as Record<string, unknown> | undefined;
-      if (meta && meta.repo === repo) {
+      if (meta && normalizeRepo((meta.repo as string | undefined) ?? '') === normalizedRepo) {
         idsToDelete.push(String(v.id));
       }
     }
@@ -172,12 +178,13 @@ export async function deleteRepoChunks(repo: string): Promise<void> {
     }
   }
 
-  await setRepoChunkCount(repo, 0);
+  await setRepoChunkCount(normalizedRepo, 0);
 }
 
 /** Count how many chunks exist for a repo */
 export async function countRepoChunks(repo: string): Promise<number> {
-  const cached = await getRepoChunkCount(repo);
+  const normalizedRepo = normalizeRepo(repo);
+  const cached = await getRepoChunkCount(normalizedRepo);
   if (cached !== null) return cached;
 
   const idx = getIndex();
@@ -194,7 +201,7 @@ export async function countRepoChunks(repo: string): Promise<number> {
 
     for (const v of page.vectors) {
       const meta = v.metadata as Record<string, unknown> | undefined;
-      if (meta && meta.repo === repo) {
+      if (meta && normalizeRepo((meta.repo as string | undefined) ?? '') === normalizedRepo) {
         count++;
       }
     }
@@ -203,6 +210,6 @@ export async function countRepoChunks(repo: string): Promise<number> {
     cursor = Number(page.nextCursor);
   }
 
-  await setRepoChunkCount(repo, count);
+  await setRepoChunkCount(normalizedRepo, count);
   return count;
 }
