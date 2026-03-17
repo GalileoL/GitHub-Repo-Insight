@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchRepoData } from '../../lib/rag/github/fetchers.js';
 import { chunkRepoData } from '../../lib/rag/chunking/index.js';
 import { embedTexts } from '../../lib/rag/embeddings/index.js';
-import { upsertChunks, deleteRepoChunks } from '../../lib/rag/storage/index.js';
+import { upsertChunks, deleteRepoChunks, setRepoChunkCount } from '../../lib/rag/storage/index.js';
 import { verifyGitHubToken, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -19,8 +19,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // --- Rate limit for indexing ---
   const rateLimit = await checkIngestRateLimit(auth.login!);
-  res.setHeader('X-RateLimit-Limit', rateLimit.limit);
-  res.setHeader('X-RateLimit-Remaining', rateLimit.remaining);
+  if (Number.isFinite(rateLimit.limit)) {
+    res.setHeader('X-RateLimit-Limit', String(rateLimit.limit));
+  }
+  if (Number.isFinite(rateLimit.remaining)) {
+    res.setHeader('X-RateLimit-Remaining', String(rateLimit.remaining));
+  }
   if (!rateLimit.allowed) {
     return res.status(429).json({ error: rateLimit.error });
   }
@@ -45,6 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const chunks = chunkRepoData(repo, rawData);
 
     if (chunks.length === 0) {
+      await setRepoChunkCount(repo, 0);
       return res.status(200).json({ status: 'ok', chunksIndexed: 0, message: 'No data to index' });
     }
 
@@ -57,6 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 5. Upsert new chunks
     await upsertChunks(chunks, embeddings);
+    await setRepoChunkCount(repo, chunks.length);
 
     return res.status(200).json({
       status: 'ok',

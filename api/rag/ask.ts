@@ -3,6 +3,7 @@ import { classifyQuery } from '../../lib/rag/retrieval/router.js';
 import { hybridSearch } from '../../lib/rag/retrieval/hybrid.js';
 import { generateAnswer, generateAnswerStream, buildSources } from '../../lib/rag/llm/index.js';
 import { verifyGitHubToken, checkRateLimit } from '../../lib/rag/auth/index.js';
+import { countRepoChunks } from '../../lib/rag/storage/index.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -14,14 +15,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const auth = await verifyGitHubToken(token);
   if (!auth.authenticated) {
     return res.status(401).json({ error: auth.error });
-  }
-
-  // --- Rate limit ---
-  const rateLimit = await checkRateLimit(auth.login!);
-  res.setHeader('X-RateLimit-Limit', String(rateLimit.limit));
-  res.setHeader('X-RateLimit-Remaining', String(rateLimit.remaining));
-  if (!rateLimit.allowed) {
-    return res.status(429).json({ error: rateLimit.error });
   }
 
   const { repo, question } = req.body ?? {};
@@ -43,6 +36,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    // Fast-fail for repos that have not been indexed yet.
+    const chunkCount = await countRepoChunks(repo);
+    if (chunkCount === 0) {
+      return res.status(200).json({
+        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+        sources: [],
+      });
+    }
+
+    // --- Rate limit ---
+    const rateLimit = await checkRateLimit(auth.login!);
+    if (Number.isFinite(rateLimit.limit)) {
+      res.setHeader('X-RateLimit-Limit', String(rateLimit.limit));
+    }
+    if (Number.isFinite(rateLimit.remaining)) {
+      res.setHeader('X-RateLimit-Remaining', String(rateLimit.remaining));
+    }
+    if (!rateLimit.allowed) {
+      return res.status(429).json({ error: rateLimit.error });
+    }
+
     // 1. Classify the query to determine type filter
     const { typeFilter } = classifyQuery(question);
 

@@ -1,7 +1,9 @@
 import { Index } from '@upstash/vector';
+import { Redis } from '@upstash/redis';
 import type { Chunk, ChunkMetadata, ScoredChunk } from '../types.js';
 
 let index: Index | null = null;
+let redis: Redis | null = null;
 
 function getIndex(): Index {
   if (!index) {
@@ -11,6 +13,35 @@ function getIndex(): Index {
     });
   }
   return index;
+}
+
+function getRedis(): Redis | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  if (!redis) {
+    redis = new Redis({ url, token });
+  }
+
+  return redis;
+}
+
+function getChunkCountKey(repo: string): string {
+  return `rag:chunk-count:${repo.toLowerCase()}`;
+}
+
+export async function setRepoChunkCount(repo: string, count: number): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  await r.set(getChunkCountKey(repo), Math.max(0, count));
+}
+
+async function getRepoChunkCount(repo: string): Promise<number | null> {
+  const r = getRedis();
+  if (!r) return null;
+  const value = await r.get<number>(getChunkCountKey(repo));
+  return typeof value === 'number' ? value : null;
 }
 
 /** Upsert chunks with pre-computed embeddings into the vector DB */
@@ -140,10 +171,15 @@ export async function deleteRepoChunks(repo: string): Promise<void> {
       await idx.delete(idsToDelete.slice(i, i + BATCH));
     }
   }
+
+  await setRepoChunkCount(repo, 0);
 }
 
 /** Count how many chunks exist for a repo */
 export async function countRepoChunks(repo: string): Promise<number> {
+  const cached = await getRepoChunkCount(repo);
+  if (cached !== null) return cached;
+
   const idx = getIndex();
   let count = 0;
   let cursor = 0;
@@ -167,5 +203,6 @@ export async function countRepoChunks(repo: string): Promise<number> {
     cursor = Number(page.nextCursor);
   }
 
+  await setRepoChunkCount(repo, count);
   return count;
 }

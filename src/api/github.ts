@@ -43,8 +43,9 @@ export async function githubFetch<T>(
   const token = useAuthStore.getState().token;
   const url = new URL(`${GITHUB_API_BASE}${endpoint}`);
 
-  if (options?.params) {
-    Object.entries(options.params).forEach(([key, value]) => {
+  const params = options?.params;
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
       url.searchParams.set(key, value);
     });
   }
@@ -87,8 +88,9 @@ async function githubFetchWithRetry<T>(
     const token = useAuthStore.getState().token;
     const url = new URL(`${GITHUB_API_BASE}${endpoint}`);
 
-    if (options?.params) {
-      Object.entries(options.params).forEach(([key, value]) => {
+    const params = options?.params;
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
         url.searchParams.set(key, value);
       });
     }

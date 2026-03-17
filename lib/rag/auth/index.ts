@@ -8,7 +8,10 @@ const DAILY_INGEST_LIMIT = Math.max(1, Number(process.env.RAG_DAILY_INGEST_LIMIT
 
 /** Admin users with unlimited access (GitHub login) */
 const ADMIN_USERS = new Set(
-  (process.env.ADMIN_GITHUB_USERS ?? 'GalileoL').split(',').map((u) => u.trim().toLowerCase()),
+  (process.env.ADMIN_GITHUB_USERS ?? '')
+    .split(',')
+    .map((u) => u.trim().toLowerCase())
+    .filter((u) => u.length > 0),
 );
 
 let redis: Redis | null = null;
@@ -73,12 +76,17 @@ export async function checkRateLimit(login: string): Promise<RateLimitResult> {
   }
 
   const r = getRedis();
+  const normalizedLogin = login.toLowerCase();
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const key = `rag:usage:${login}:${today}`;
+  const key = `rag:usage:${normalizedLogin}:${today}`;
 
-  const current = (await r.get<number>(key)) ?? 0;
+  // INCR-first flow avoids race conditions from separate GET + INCR reads.
+  const next = await r.incr(key);
+  if (next === 1) {
+    await r.expire(key, 60 * 60 * 48);
+  }
 
-  if (current >= DAILY_LIMIT) {
+  if (next > DAILY_LIMIT) {
     return {
       allowed: false,
       remaining: 0,
@@ -87,15 +95,9 @@ export async function checkRateLimit(login: string): Promise<RateLimitResult> {
     };
   }
 
-  // Increment and set TTL of 48 hours (auto-cleanup)
-  await r.incr(key);
-  if (current === 0) {
-    await r.expire(key, 60 * 60 * 48);
-  }
-
   return {
     allowed: true,
-    remaining: DAILY_LIMIT - current - 1,
+    remaining: DAILY_LIMIT - next,
     limit: DAILY_LIMIT,
   };
 }
@@ -107,12 +109,17 @@ export async function checkIngestRateLimit(login: string): Promise<RateLimitResu
   }
 
   const r = getRedis();
+  const normalizedLogin = login.toLowerCase();
   const today = new Date().toISOString().slice(0, 10);
-  const key = `rag:ingest:${login}:${today}`;
+  const key = `rag:ingest:${normalizedLogin}:${today}`;
 
-  const current = (await r.get<number>(key)) ?? 0;
+  // INCR-first flow avoids race conditions from separate GET + INCR reads.
+  const next = await r.incr(key);
+  if (next === 1) {
+    await r.expire(key, 60 * 60 * 48);
+  }
 
-  if (current >= DAILY_INGEST_LIMIT) {
+  if (next > DAILY_INGEST_LIMIT) {
     return {
       allowed: false,
       remaining: 0,
@@ -121,14 +128,9 @@ export async function checkIngestRateLimit(login: string): Promise<RateLimitResu
     };
   }
 
-  await r.incr(key);
-  if (current === 0) {
-    await r.expire(key, 60 * 60 * 48);
-  }
-
   return {
     allowed: true,
-    remaining: DAILY_INGEST_LIMIT - current - 1,
+    remaining: DAILY_INGEST_LIMIT - next,
     limit: DAILY_INGEST_LIMIT,
   };
 }
