@@ -36,15 +36,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Fast-fail for repos that have not been indexed yet.
-    const chunkCount = await countRepoChunks(repo);
-    if (chunkCount === 0) {
-      return res.status(200).json({
-        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
-        sources: [],
-      });
-    }
-
     // --- Rate limit ---
     const rateLimit = await checkRateLimit(auth.login!);
     if (Number.isFinite(rateLimit.limit)) {
@@ -55,6 +46,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!rateLimit.allowed) {
       return res.status(429).json({ error: rateLimit.error });
+    }
+
+    // Fast-fail for repos that have not been indexed yet.
+    const chunkCount = await countRepoChunks(repo);
+    if (chunkCount === 0) {
+      return res.status(200).json({
+        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+        sources: [],
+      });
     }
 
     // 1. Classify the query to determine type filter
