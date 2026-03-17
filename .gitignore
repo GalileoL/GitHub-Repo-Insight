@@ -18,6 +18,7 @@ dist-ssr
 
 # Troubleshooting log (local dev notes)
 TROUBLESHOOTING.md
+docs/interview-prep.md
 
 # Editor directories and files
 .vscode/*
