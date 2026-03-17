@@ -50,6 +50,23 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
     );
   }
 
+  if (status.isError) {
+    return (
+      <div className="rounded-xl border border-accent-red/30 bg-accent-red/5 p-6 text-center">
+        <h3 className="text-base font-medium text-accent-red mb-2">Failed to load Ask Repo status</h3>
+        <p className="text-sm text-text-muted mb-4">
+          {status.error instanceof Error ? status.error.message : 'Please try again.'}
+        </p>
+        <button
+          onClick={() => status.refetch()}
+          className="inline-flex items-center gap-2 rounded-lg bg-accent-teal px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-teal/90"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   // Login gate
   if (!isLoggedIn) {
     const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID ?? '';

@@ -35,10 +35,18 @@ function ChartSkeleton() {
 const STORAGE_KEY = 'dashboard-card-order';
 const DEFAULT_ORDER = ['languages', 'contributors', 'commits', 'issues', 'releases', 'heatmap'];
 
+function isValidStoredOrder(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length !== DEFAULT_ORDER.length) return false;
+  const expected = new Set(DEFAULT_ORDER);
+  const actual = new Set(value);
+  if (actual.size !== expected.size) return false;
+  return DEFAULT_ORDER.every((id) => actual.has(id));
+}
+
 function getStoredOrder(): string[] {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    if (Array.isArray(stored) && stored.length === DEFAULT_ORDER.length) return stored;
+    if (isValidStoredOrder(stored)) return stored;
   } catch { /* ignore */ }
   return DEFAULT_ORDER;
 }
@@ -94,6 +102,7 @@ export default function DashboardPage() {
     setCardOrder((prev) => {
       const oldIndex = prev.indexOf(active.id as string);
       const newIndex = prev.indexOf(over.id as string);
+      if (oldIndex === -1 || newIndex === -1) return prev;
       const next = [...prev];
       next.splice(oldIndex, 1);
       next.splice(newIndex, 0, active.id as string);

@@ -60,7 +60,11 @@ export async function askRepoStream(
     throw new Error(data.error ?? 'Failed to get answer');
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) {
+    throw new Error('Streaming response body is not available in this environment');
+  }
+
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
 
@@ -77,11 +81,15 @@ export async function askRepoStream(
       const data = line.slice(6);
       if (data === '[DONE]') return;
 
-      const parsed = JSON.parse(data);
-      if (parsed.type === 'delta') {
-        onDelta(parsed.content);
-      } else if (parsed.type === 'sources') {
-        onSources(parsed.sources);
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.type === 'delta') {
+          onDelta(parsed.content);
+        } else if (parsed.type === 'sources') {
+          onSources(parsed.sources);
+        }
+      } catch {
+        // Ignore malformed partial lines and continue stream consumption.
       }
     }
   }
