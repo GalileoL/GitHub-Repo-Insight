@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { StreamStatus } from '../hooks/useAskRepo';
 import { diffWords } from 'diff';
 import Prism from 'prismjs';
@@ -49,23 +49,74 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
 
   const blocks = useMemo(() => parseMarkdown(answer), [answer]);
 
-  const diffNodes = useMemo(() => {
-    if (!previousAnswer || previousAnswer === answer) return null;
+  const shouldComputeDiff =
+    !!previousAnswer &&
+    previousAnswer !== answer &&
+    previousAnswer.length < 12000 &&
+    answer.length < 12000;
 
-    const diff = diffWords(previousAnswer, answer);
-    return diff.map((part, idx) => {
-      const className = part.added
-        ? 'text-accent-green'
-        : part.removed
-        ? 'text-accent-red line-through'
-        : '';
-      return (
-        <span key={idx} className={className}>
-          {part.value}
-        </span>
+  const [diffNodes, setDiffNodes] = useState<React.ReactNode[] | null>(null);
+  const diffWorkerRef = useRef<Worker | null>(null);
+
+  useEffect(() => {
+    if (!shouldComputeDiff) {
+      setDiffNodes(null);
+      return;
+    }
+
+    // For moderately sized text, compute diff on main thread.
+    if (answer.length + (previousAnswer?.length ?? 0) < 6000) {
+      const diff = diffWords(previousAnswer!, answer);
+      setDiffNodes(
+        diff.map((part, idx) => {
+          const className = part.added
+            ? 'text-accent-green'
+            : part.removed
+            ? 'text-accent-red line-through'
+            : '';
+          return (
+            <span key={idx} className={className}>
+              {part.value}
+            </span>
+          );
+        }),
       );
-    });
-  }, [answer, previousAnswer]);
+      return;
+    }
+
+    // For larger texts, offload diff computation to a Web Worker to avoid UI jank.
+    if (!diffWorkerRef.current) {
+      diffWorkerRef.current = new Worker(new URL('../../../workers/diffWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+    }
+
+    const worker = diffWorkerRef.current;
+    const onMessage = (event: MessageEvent) => {
+      const diff = event.data as Array<{ added?: boolean; removed?: boolean; value: string }>;
+      setDiffNodes(
+        diff.map((part, idx) => {
+          const className = part.added
+            ? 'text-accent-green'
+            : part.removed
+            ? 'text-accent-red line-through'
+            : '';
+          return (
+            <span key={idx} className={className}>
+              {part.value}
+            </span>
+          );
+        }),
+      );
+    };
+
+    worker.addEventListener('message', onMessage);
+    worker.postMessage({ previous: previousAnswer, current: answer });
+
+    return () => {
+      worker.removeEventListener('message', onMessage);
+    };
+  }, [answer, previousAnswer, shouldComputeDiff]);
 
   const downloadMarkdown = () => {
     const blob = new Blob([answer], { type: 'text/markdown;charset=utf-8' });
@@ -214,6 +265,11 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
           <div className="whitespace-pre-wrap break-words">{diffNodes}</div>
         </div>
       )}
+      {!diffNodes && previousAnswer && previousAnswer !== answer && (
+        <div className="mb-4 rounded-lg border border-border-default bg-bg-surface p-4 text-xs leading-relaxed">
+          <div className="text-text-muted">Diff suppressed for large answers to keep the UI responsive.</div>
+        </div>
+      )}
 
       <div className="space-y-2 text-text-primary text-sm leading-relaxed">
         {renderBlocks(blocks)}
@@ -228,6 +284,15 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
 function renderBlocks(blocks: MarkdownBlock[]): React.ReactNode[] {
   return blocks.map((block, idx) => {
     switch (block.type) {
+      case 'heading': {
+        const headingTags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const;
+        const tag = headingTags[Math.max(0, Math.min(5, block.level - 1))];
+        return React.createElement(
+          tag,
+          { key: idx, className: 'mt-6 mb-3 text-base font-semibold text-text-primary' },
+          renderMarkdownInline(block.content),
+        );
+      }
       case 'paragraph':
         return (
           <p key={idx} className="mb-3 last:mb-0">
