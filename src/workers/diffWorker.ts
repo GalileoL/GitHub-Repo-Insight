@@ -8,21 +8,30 @@ type DiffPart = {
   value: string;
 };
 
+type DiffMessage = {
+  previous: string;
+  current: string;
+};
+
+function isDiffMessage(data: unknown): data is DiffMessage {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    typeof (data as DiffMessage).previous === 'string' &&
+    typeof (data as DiffMessage).current === 'string'
+  );
+}
+
 self.addEventListener('message', (event) => {
-  const data = event.data;
+  const data: unknown = event.data;
 
   // Validate message shape before processing
-  if (
-    !data ||
-    typeof data !== 'object' ||
-    typeof (data as any).previous !== 'string' ||
-    typeof (data as any).current !== 'string'
-  ) {
+  if (!isDiffMessage(data)) {
     // Ignore unexpected or malformed messages
     return;
   }
 
-  const { previous, current } = data as { previous: string; current: string };
+  const { previous, current } = data;
   const diff = diffWords(previous, current) as DiffPart[];
   self.postMessage(diff);
 });
