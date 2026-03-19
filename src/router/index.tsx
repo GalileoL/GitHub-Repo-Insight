@@ -6,6 +6,7 @@ const HomePage = lazy(() => import('../pages/HomePage'));
 const DashboardPage = lazy(() => import('../pages/DashboardPage'));
 const AnalyzePage = lazy(() => import('../pages/AnalyzePage'));
 const AuthCallback = lazy(() => import('../pages/AuthCallback'));
+const SharePage = lazy(() => import('../pages/SharePage'));
 
 const fallback = (
   <div className="flex items-center justify-center h-screen bg-bg-primary">
@@ -32,6 +33,10 @@ export const router = createBrowserRouter([
       {
         path: '/auth/callback',
         element: <Suspense fallback={fallback}><AuthCallback /></Suspense>,
+      },
+      {
+        path: '/share/:id',
+        element: <Suspense fallback={fallback}><SharePage /></Suspense>,
       },
     ],
   },

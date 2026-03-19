@@ -148,3 +148,19 @@ export async function* generateAnswerStream(
     if (content) yield content;
   }
 }
+
+/**
+ * Pre-warm embeddings by requesting embeddings for a few common queries.
+ * This is a best-effort optimization to reduce cold start latency on first query.
+ */
+export async function prewarmEmbeddings(): Promise<void> {
+  try {
+    const client = getClient();
+    await client.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: ['What is this repository about?', 'How do I use this project?'],
+    });
+  } catch {
+    // Best-effort; ignore failures.
+  }
+}
