@@ -27,10 +27,6 @@ function test(name, fn) {
   }
 }
 
-function assert(condition, msg) {
-  if (!condition) throw new Error(msg || 'Assertion failed');
-}
-
 function assertDeepEqual(a, b, msg) {
   const sa = JSON.stringify(a);
   const sb = JSON.stringify(b);
