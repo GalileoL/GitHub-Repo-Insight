@@ -146,7 +146,79 @@ Update this file when any of these changes happen:
 - Build scripts or required env vars change
 - Stream control flow or status state changes ✓ useAskRepo exports
 
-## 11) Known Risks / Follow-Ups
-- Stream UX can improve with stop/retry/reconnect.
-- Markdown renderer may need expansion (lists/links/tables) if answer complexity grows.
-- Keep security hardening notes aligned with `docs/plans/2026-03-18-security-hardening-checklist.md`.
+## 11) SSE Optimization Roadmap (All Phases)
+
+### Phase 1 ✅ (2026-03-19 — COMPLETE)
+- [x] Client AbortController support
+- [x] Server client-disconnect detection (req.on 'close'/'error')
+- [x] Unified error event protocol
+- [x] useAskRepo: cancel(), retry(), streamStatus, streamError exports
+- [x] UI: Stop button, Retry on cancel, status indicators
+- [x] Partial answer preservation on user cancel
+
+### Phase 2 (Priority: High)
+**Reliability & Observability**
+- [ ] Heartbeat events (every 15-30s) to prevent proxy timeout
+- [ ] Request ID in event header for tracing
+- [ ] Server-side metrics: stream start time, chunk count, error count
+- [ ] Client-side metrics: TTFB, total duration, chunk rate
+- [ ] Error categorization: network, server-side LLM, parsing, timeout
+- Files to modify: `api/rag/ask.ts`, `src/features/rag/api/rag.ts`, (new) `lib/rag/metrics/index.ts`
+
+### Phase 3 (Priority: High)
+**Reconnect & Resume Protocol**
+- [ ] Stream position tracking (byte offset or event sequence number)
+- [ ] Save partial state to Redis (user ID, repo, question, position)
+- [ ] Reconnect endpoint POST /api/rag/resume with position
+- [ ] Resume from last received position (skip already-sent deltas)
+- [ ] User-facing: "Reconnecting..." UI, auto-retry on network recover
+- Files: `api/rag/ask.ts`, (new) `api/rag/resume.ts`, `src/features/rag/api/rag.ts`, `lib/rag/auth/index.ts`
+
+### Phase 4 (Priority: Medium)
+**Streaming Tests & Validation**
+- [ ] Unit tests: SSE parser edge cases (fragmented frames, malformed JSON, timeouts)
+- [ ] Integration tests: Abort during delta, reconnect mid-answer, network timeout scenarios
+- [ ] E2E tests: Full flow with actual LLM, user cancel, retry sequence
+- [ ] Load tests: Concurrent streams, connection churn
+- Files: `src/features/rag/api/__tests__/rag.test.ts`, `api/rag/__tests__/ask.test.ts`
+
+### Phase 5 (Priority: Medium)
+**Markdown Renderer Enhancement**
+- [ ] Support lists (unordered, ordered, nested)
+- [ ] Support links with proper click handling
+- [ ] Support tables (render as grid)
+- [ ] Support blockquotes and emphasis variants
+- [ ] Support images (if LLM outputs markdown image syntax)
+- Files: `src/features/rag/components/AnswerCard.tsx`, (new) `src/utils/markdown-parser.ts`
+
+### Phase 6 (Priority: Low)
+**Advanced UX**
+- [ ] Answer diff view on retry (show what changed)
+- [ ] Inline edit for partial answers
+- [ ] Export answer as markdown file
+- [ ] Share partial answer with link (save to Redis cache)
+- [ ] Keyboard shortcut for cancel (Escape)
+- Files: `src/features/rag/components/AnswerCard.tsx`, `src/features/rag/components/AskRepoPanel.tsx`
+
+### Phase 7 (Priority: Low)
+**Performance & Optimization**
+- [ ] Stream aggregation: batch small deltas to reduce React renders
+- [ ] Lazy-load source links (defer GitHub fetch)
+- [ ] Cache retrieved answers by repo+question hash (separate from user history)
+- [ ] Pre-warm embeddings on repo index for faster first query
+- Files: `src/features/rag/api/rag.ts`, `src/features/rag/hooks/useAskRepo.ts`, `lib/rag/storage/index.ts`
+
+### Phase 8 (Priority: Low)
+**Documentation & Monitoring**
+- [ ] Write stream interruption guide for users (when to expect cancel/retry)
+- [ ] Add logging: stream lifecycle events (start, chunk received, complete, error)
+- [ ] Dashboard: streaming stats (success rate, avg duration, cancel rate by repo)
+- [ ] Alert on: high error rate, > threshold connection churn
+- Files: `docs/`, (new) `lib/rag/logging/index.ts`, (new) `api/analytics/streams.ts`
+
+## 12) Known Risks & Constraints
+- Markdown renderer currently intentionally constrained; Phase 5 needed for full feature set
+- Stream reconnect window: ~5 min (Redis TTL); after that partial answer is lost
+- Vercel cold start may interrupt early deltas; Phase 2 heartbeat helps
+- Multi-region deployments: stream state not shared (per-region only)
+- Keep security hardening notes aligned with `docs/plans/2026-03-18-security-hardening-checklist.md`
