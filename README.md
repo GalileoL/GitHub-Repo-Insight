@@ -114,6 +114,12 @@ npm run preview
 
 ## Project Architecture
 
+## AI Project Memory
+
+For AI-assisted development and onboarding, see:
+
+- `Memory.md` — concise architecture, API contracts, SSE/markdown behavior, and maintenance checklist
+
 ```
 src/
 ├── api/            # GitHub API client with auth token injection & rate limiting
@@ -157,6 +163,37 @@ lib/
 **Dashboard data flow:** GitHub API → `githubFetch` client → transformers → TanStack Query hooks → chart components
 
 **Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → rerank → LLM → cited answer
+
+## SSE and Markdown Implementation Notes
+
+### SSE streaming
+
+- Stream endpoint: `POST /api/rag/ask` with `{ stream: true }`
+- Server implementation: `api/rag/ask.ts`
+    - Sets `text/event-stream` headers and disables proxy buffering
+    - Sends `delta` events, then `sources`, then `[DONE]`
+- Client implementation: `src/features/rag/api/rag.ts`
+    - Uses `fetch` + `ReadableStream.getReader()`
+    - Parses line-delimited `data: ...` events and dispatches to callbacks
+
+### Markdown rendering
+
+- Current answer renderer is custom (`src/features/rag/components/AnswerCard.tsx`), not `react-markdown`
+- Supports:
+    - fenced code blocks
+    - bold (`**text**`)
+    - inline code (`` `code` ``)
+    - source tokens (`[Source N]`)
+
+### Stream interruption handling
+
+- Implemented robustness:
+    - guards against missing `res.body` in the streaming client
+    - ignores malformed SSE JSON lines via `try/catch`
+- Current limitations:
+    - no explicit user-cancel (AbortController)
+    - no resume/reconnect protocol for dropped streams
+    - no partial-answer recovery after connection loss
 
 ## Deployment
 
