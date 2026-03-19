@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchRepoData } from '../../lib/rag/github/fetchers.js';
 import { chunkRepoData } from '../../lib/rag/chunking/index.js';
 import { embedTexts } from '../../lib/rag/embeddings/index.js';
+import { prewarmEmbeddings } from '../../lib/rag/llm/index.js';
 import { upsertChunks, deleteRepoChunks, setRepoChunkCount } from '../../lib/rag/storage/index.js';
 import { verifyGitHubToken, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
 
@@ -63,6 +64,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 5. Upsert new chunks
     await upsertChunks(chunks, embeddings);
     await setRepoChunkCount(repo, chunks.length);
+
+    // Kick off a best-effort embedding pre-warm to reduce first-query latency
+    void prewarmEmbeddings();
 
     return res.status(200).json({
       status: 'ok',

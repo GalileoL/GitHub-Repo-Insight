@@ -1,6 +1,6 @@
 import { Index } from '@upstash/vector';
 import { Redis } from '@upstash/redis';
-import type { Chunk, ChunkMetadata, ScoredChunk } from '../types.js';
+import type { Chunk, ChunkMetadata, ScoredChunk, Source } from '../types.js';
 
 let index: Index | null = null;
 let redis: Redis | null = null;
@@ -212,4 +212,93 @@ export async function countRepoChunks(repo: string): Promise<number> {
 
   await setRepoChunkCount(normalizedRepo, count);
   return count;
+}
+
+// -----------------------------------------------------------------------------
+// Stream resume/session helpers
+// -----------------------------------------------------------------------------
+
+type StreamSession = {
+  requestId: string;
+  login: string;
+  repo: string;
+  question: string;
+  createdAt: number; // ms
+  lastSeq?: number;
+};
+
+function getStreamSessionKey(requestId: string): string {
+  return `rag:stream:${requestId}`;
+}
+
+export async function setStreamSession(
+  session: StreamSession,
+  ttlSeconds = 60 * 5,
+): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  await r.set(getStreamSessionKey(session.requestId), JSON.stringify(session));
+  await r.expire(getStreamSessionKey(session.requestId), ttlSeconds);
+}
+
+export async function getStreamSession(
+  requestId: string,
+): Promise<StreamSession | null> {
+  const r = getRedis();
+  if (!r) return null;
+  const raw = await r.get<string>(getStreamSessionKey(requestId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as StreamSession;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteStreamSession(requestId: string): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  await r.del(getStreamSessionKey(requestId));
+}
+
+// -----------------------------------------------------------------------------
+// Share link helpers
+// -----------------------------------------------------------------------------
+
+type ShareEntry = {
+  id: string;
+  repo: string;
+  question: string;
+  answer: string;
+  sources: Source[];
+  createdAt: number;
+};
+
+function getShareKey(shareId: string): string {
+  return `rag:share:${shareId}`;
+}
+
+export async function setShareEntry(entry: ShareEntry, ttlSeconds = 60 * 60 * 24 * 7): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  await r.set(getShareKey(entry.id), JSON.stringify(entry));
+  await r.expire(getShareKey(entry.id), ttlSeconds);
+}
+
+export async function getShareEntry(shareId: string): Promise<ShareEntry | null> {
+  const r = getRedis();
+  if (!r) return null;
+  const raw = await r.get<string>(getShareKey(shareId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ShareEntry;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteShareEntry(shareId: string): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  await r.del(getShareKey(shareId));
 }

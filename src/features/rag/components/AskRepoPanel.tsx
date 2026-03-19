@@ -22,6 +22,9 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
   const status = useIngestStatus(fullRepo);
   const ingest = useIngestRepo(fullRepo);
   const ask = useAskRepo(fullRepo);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   const isIndexed = status.data?.indexed ?? false;
   const isIngesting = ingest.isPending;
@@ -32,6 +35,39 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
     if (!text.trim()) return;
     setQuestion(text);
     ask.ask(text);
+  };
+
+  const handleShare = async () => {
+    if (!ask.streamingAnswer) return;
+    setShareError(null);
+    setIsSharing(true);
+    try {
+      const res = await fetch('/api/rag/share', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          repo: fullRepo,
+          question,
+          answer: ask.streamingAnswer,
+          sources: ask.sources,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Failed to create share link');
+      }
+
+      const data = await res.json();
+      setShareUrl(window.location.origin + data.url);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -227,15 +263,48 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
             </div>
           )}
 
+          {shareUrl && (
+            <div className="rounded-xl border border-accent-teal/30 bg-accent-teal/5 p-4">
+              <p className="text-sm text-accent-teal">Share link created:</p>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  readOnly
+                  value={shareUrl}
+                  className="flex-1 rounded-lg border border-border-default bg-bg-surface px-3 py-2 text-xs"
+                />
+                <button
+                  onClick={() => navigator.clipboard.writeText(shareUrl)}
+                  className="rounded-lg bg-accent-teal px-3 py-2 text-xs font-medium text-white hover:bg-accent-teal/90"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          )}
+          {isSharing && (
+            <div className="rounded-xl border border-border-default bg-bg-surface p-4 text-sm text-text-muted">
+              Creating share link…
+            </div>
+          )}
+
+          {shareError && (
+            <div className="rounded-xl border border-accent-red/30 bg-accent-red/5 p-4">
+              <p className="text-sm text-accent-red">{shareError}</p>
+            </div>
+          )}
+
           {/* Answer + sources */}
           {(ask.isPending || ask.isStreaming || ask.streamingAnswer) && (
             <div className="space-y-4">
               <AnswerCard
                 answer={ask.streamingAnswer}
+                previousAnswer={ask.previousAnswer}
                 isLoading={ask.isPending && !ask.streamingAnswer}
                 streamStatus={ask.streamStatus}
                 onCancel={ask.cancel}
                 onRetry={ask.retry}
+                onShare={!isSharing ? handleShare : undefined}
+                onEdit={ask.setAnswer}
               />
               {ask.sources.length > 0 && <SourceList sources={ask.sources} />}
               {ask.streamStatus === 'cancelled' && ask.streamError && (

@@ -83,15 +83,22 @@ Keep it up to date when architecture, APIs, or conventions change.
 
 ## 6) Markdown Rendering Notes
 - Rendering is custom, not `react-markdown`.
+- `src/utils/markdown-parser.tsx` (new):
+  - Parses block-level markdown: paragraphs, code fences, blockquotes, tables, lists (nested), and metadata.
+  - Supports Markdown inside table cells and list items (nested block parsing).
 - `src/features/rag/components/AnswerCard.tsx`:
-  - Splits fenced code blocks with a small parser (`parseBlocks`)
-  - Renders inline markdown with lightweight regex (`renderInlineMarkdown`)
+  - Renders markdown blocks into React elements via `renderBlocks`.
+  - Supports inline markdown via `renderMarkdownInline`.
   - Supports:
-    - fenced code blocks ```lang
-    - bold `**text**`
-    - inline code `` `code` ``
-    - `[Source N]` token rendering
-- This is intentionally constrained for controlled LLM output.
+    - fenced code blocks ```lang (syntax highlighted via Prism.js)
+    - bold `**text**`, italic `*text*`
+    - links `[text](url)`
+    - images `![alt](src)`
+    - tables (markdown table syntax)
+    - nested lists and nested block parse inside list items
+    - blockquotes (`> quote`)
+  - Provides copy-to-clipboard on code blocks + download-as-markdown button in UI.
+- This is intentionally constrained for controlled LLM output; avoids a full markdown renderer.
 
 ## 7) Stream Interruption / Robustness Status (UPDATED: Phase 1 Complete)
 - ✅ Implemented on Phase 1:
@@ -158,57 +165,65 @@ Update this file when any of these changes happen:
 
 ### Phase 2 (Priority: High)
 **Reliability & Observability**
-- [ ] Heartbeat events (every 15-30s) to prevent proxy timeout
-- [ ] Request ID in event header for tracing
-- [ ] Server-side metrics: stream start time, chunk count, error count
-- [ ] Client-side metrics: TTFB, total duration, chunk rate
-- [ ] Error categorization: network, server-side LLM, parsing, timeout
+- [x] Heartbeat events (every 15-30s) to prevent proxy timeout
+- [x] Request ID in event header for tracing
+- [x] Server-side metrics: stream start time, chunk count, error count
+- [x] Client-side metrics: TTFB, total duration, chunk rate
+- [x] Error categorization: network, server-side LLM, parsing, timeout
 - Files to modify: `api/rag/ask.ts`, `src/features/rag/api/rag.ts`, (new) `lib/rag/metrics/index.ts`
 
 ### Phase 3 (Priority: High)
 **Reconnect & Resume Protocol**
-- [ ] Stream position tracking (byte offset or event sequence number)
-- [ ] Save partial state to Redis (user ID, repo, question, position)
-- [ ] Reconnect endpoint POST /api/rag/resume with position
-- [ ] Resume from last received position (skip already-sent deltas)
-- [ ] User-facing: "Reconnecting..." UI, auto-retry on network recover
-- Files: `api/rag/ask.ts`, (new) `api/rag/resume.ts`, `src/features/rag/api/rag.ts`, `lib/rag/auth/index.ts`
+- [x] Stream position tracking (byte offset or event sequence number)
+- [x] Save partial state to Redis (user ID, repo, question, position)
+- [x] Reconnect endpoint POST /api/rag/resume with position
+- [x] Resume from last received position (skip already-sent deltas)
+- [x] User-facing: "Reconnecting..." UI, auto-retry on network recover
+- Files: `api/rag/ask.ts`, (new) `api/rag/resume.ts`, `src/features/rag/api/rag.ts`, `lib/rag/auth/index.ts`, `lib/rag/storage/index.ts`
 
 ### Phase 4 (Priority: Medium)
 **Streaming Tests & Validation**
-- [ ] Unit tests: SSE parser edge cases (fragmented frames, malformed JSON, timeouts)
-- [ ] Integration tests: Abort during delta, reconnect mid-answer, network timeout scenarios
+- [x] Unit tests: SSE parser edge cases (fragmented frames, malformed JSON, timeouts)
+- [x] Integration tests: Abort during delta, reconnect mid-answer, network timeout scenarios (simulated via mocked fetch)
 - [ ] E2E tests: Full flow with actual LLM, user cancel, retry sequence
 - [ ] Load tests: Concurrent streams, connection churn
-- Files: `src/features/rag/api/__tests__/rag.test.ts`, `api/rag/__tests__/ask.test.ts`
+- Files: `src/features/rag/api/rag.test.ts` (+ existing validation scripts)
 
 ### Phase 5 (Priority: Medium)
 **Markdown Renderer Enhancement**
-- [ ] Support lists (unordered, ordered, nested)
-- [ ] Support links with proper click handling
-- [ ] Support tables (render as grid)
-- [ ] Support blockquotes and emphasis variants
-- [ ] Support images (if LLM outputs markdown image syntax)
-- Files: `src/features/rag/components/AnswerCard.tsx`, (new) `src/utils/markdown-parser.ts`
+- [x] Support lists (unordered, ordered, nested)
+- [x] Support links with proper click handling
+- [x] Support tables (render as grid)
+- [x] Support blockquotes and emphasis variants
+- [x] Support images (if LLM outputs markdown image syntax)
+- [x] Add syntax highlighting for fenced code blocks (Prism.js)
+- [x] Download answer as markdown file
+- Files: `src/features/rag/components/AnswerCard.tsx`, (new) `src/utils/markdown-parser.tsx`
 
 ### Phase 6 (Priority: Low)
 **Advanced UX**
-- [ ] Answer diff view on retry (show what changed)
+- [x] Answer diff view on retry (show what changed)
 - [ ] Inline edit for partial answers
-- [ ] Export answer as markdown file
+- [x] Export answer as markdown file
 - [ ] Share partial answer with link (save to Redis cache)
-- [ ] Keyboard shortcut for cancel (Escape)
+- [x] Keyboard shortcut for cancel (Escape)
 - Files: `src/features/rag/components/AnswerCard.tsx`, `src/features/rag/components/AskRepoPanel.tsx`
 
 ### Phase 7 (Priority: Low)
 **Performance & Optimization**
-- [ ] Stream aggregation: batch small deltas to reduce React renders
-- [ ] Lazy-load source links (defer GitHub fetch)
-- [ ] Cache retrieved answers by repo+question hash (separate from user history)
-- [ ] Pre-warm embeddings on repo index for faster first query
-- Files: `src/features/rag/api/rag.ts`, `src/features/rag/hooks/useAskRepo.ts`, `lib/rag/storage/index.ts`
+- [x] Stream aggregation: batch small deltas to reduce React renders
+- [x] Lazy-load source links (toggle view in SourceList)
+- [x] Cache retrieved answers by repo+question hash (localStorage)
+- [x] Pre-warm embeddings on repo index for faster first query (best-effort)
+- Files: `src/features/rag/hooks/useAskRepo.ts`, `lib/rag/llm/index.ts`, `api/rag/ingest.ts`, `lib/rag/storage/index.ts`
 
 ### Phase 8 (Priority: Low)
+**Monitoring & hardening**
+- [ ] Add server-side telemetry / storage for stream metrics (e.g., send to Datadog or App Insights)
+- [ ] Harden retry/resume logic against payload tampering
+- [ ] Add intentional rate limiting for shared links
+- [ ] Improve shared link UX with expiration notice
+- Files: `lib/rag/metrics/index.ts`, `api/rag/*`, `src/features/rag/*`
 **Documentation & Monitoring**
 - [ ] Write stream interruption guide for users (when to expect cancel/retry)
 - [ ] Add logging: stream lifecycle events (start, chunk received, complete, error)

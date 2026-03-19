@@ -1,23 +1,86 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import type { StreamStatus } from '../hooks/useAskRepo';
+import { diffWords } from 'diff';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-jsx';
+import 'prismjs/components/prism-tsx';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-markdown';
+import 'prismjs/components/prism-bash';
+import 'prismjs/themes/prism-tomorrow.css';
+import { parseMarkdown, renderMarkdownInline } from '../../../utils/markdown-parser';
+import type { MarkdownBlock } from '../../../utils/markdown-parser';
 
 interface AnswerCardProps {
   answer: string;
+  previousAnswer?: string | null;
   isLoading: boolean;
   streamStatus?: StreamStatus;
   onCancel?: () => void;
   onRetry?: () => void;
+  onShare?: () => void;
+  onEdit?: (answer: string) => void;
 }
 
-export default function AnswerCard({ answer, isLoading, streamStatus = 'idle', onCancel, onRetry }: AnswerCardProps) {
-  const isStreaming = streamStatus === 'streaming' || streamStatus === 'connecting';
+export default function AnswerCard({ answer, previousAnswer, isLoading, streamStatus = 'idle', onCancel, onRetry, onShare, onEdit }: AnswerCardProps) {
+  const isStreaming = streamStatus === 'streaming' || streamStatus === 'connecting' || streamStatus === 'reconnecting';
+  const [editing, setEditing] = useState(false);
+  const [editedText, setEditedText] = useState(answer);
+
+  useEffect(() => {
+    setEditedText(answer);
+  }, [answer]);
+
+  // Keyboard shortcut: Escape cancels active streaming.
+  useEffect(() => {
+    if (!onCancel || !isStreaming) return;
+
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onCancel();
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isStreaming, onCancel]);
+
+  const downloadMarkdown = () => {
+    const blob = new Blob([answer], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'answer.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const startEditing = () => setEditing(true);
+  const cancelEditing = () => {
+    setEditedText(answer);
+    setEditing(false);
+  };
+  const saveEditing = () => {
+    setEditing(false);
+    onEdit?.(editedText);
+  };
 
   if (isLoading && !answer) {
     return (
       <div className="rounded-xl border border-border-default bg-bg-surface p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="h-5 w-5 rounded-full border-2 border-accent-teal border-t-transparent animate-spin" />
-          <span className="text-sm text-text-muted">{streamStatus === 'connecting' ? 'Connecting…' : 'Thinking...'}</span>
+          <span className="text-sm text-text-muted">
+            {streamStatus === 'connecting'
+              ? 'Connecting…'
+              : streamStatus === 'reconnecting'
+              ? 'Reconnecting…'
+              : 'Thinking...'}
+          </span>
         </div>
         <div className="space-y-3 animate-pulse">
           <div className="h-4 bg-bg-elevated rounded w-full" />
@@ -50,42 +113,109 @@ export default function AnswerCard({ answer, isLoading, streamStatus = 'idle', o
     );
   }
 
-  const blocks = parseBlocks(answer);
+  const blocks = parseMarkdown(answer);
+
+  const diffNodes = useMemo(() => {
+    if (!previousAnswer || previousAnswer === answer) return null;
+
+    const diff = diffWords(previousAnswer, answer);
+    return diff.map((part, idx) => {
+      const className = part.added
+        ? 'text-accent-green'
+        : part.removed
+        ? 'text-accent-red line-through'
+        : '';
+      return (
+        <span key={idx} className={className}>
+          {part.value}
+        </span>
+      );
+    });
+  }, [answer, previousAnswer]);
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-surface p-6">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-muted uppercase tracking-wider">Answer</h3>
-        {isStreaming && (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {isStreaming && (
             <div className="flex items-center gap-1">
               <div className="h-1.5 w-1.5 bg-accent-teal rounded-full animate-pulse" />
               <span className="text-xs text-text-muted">streaming</span>
             </div>
-            {onCancel && (
+          )}
+
+          {answer && (
+            <>
               <button
-                onClick={onCancel}
-                className="text-xs text-text-muted hover:text-accent-red transition-colors px-2 py-0.5 rounded hover:bg-accent-red/10"
+                onClick={downloadMarkdown}
+                className="text-xs text-text-muted hover:text-accent-teal transition-colors px-2 py-0.5 rounded hover:bg-accent-teal/10"
               >
-                Stop
+                Download
               </button>
-            )}
-          </div>
-        )}
+              {onShare && (
+                <button
+                  onClick={onShare}
+                  className="text-xs text-text-muted hover:text-accent-teal transition-colors px-2 py-0.5 rounded hover:bg-accent-teal/10"
+                >
+                  Share
+                </button>
+              )}
+              {onEdit && !isStreaming && (
+                <button
+                  onClick={startEditing}
+                  className="text-xs text-text-muted hover:text-accent-teal transition-colors px-2 py-0.5 rounded hover:bg-accent-teal/10"
+                >
+                  Edit
+                </button>
+              )}
+            </>
+          )}
+
+          {onCancel && isStreaming && (
+            <button
+              onClick={onCancel}
+              className="text-xs text-text-muted hover:text-accent-red transition-colors px-2 py-0.5 rounded hover:bg-accent-red/10"
+            >
+              Stop
+            </button>
+          )}
+        </div>
       </div>
+
+      {editing && (
+        <div className="mb-4 space-y-2">
+          <textarea
+            value={editedText}
+            onChange={(e) => setEditedText(e.target.value)}
+            className="w-full min-h-[160px] rounded-lg border border-border-default bg-bg-surface p-3 text-sm text-text-primary resize-none"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={saveEditing}
+              className="rounded-lg bg-accent-teal px-4 py-2 text-sm font-medium text-white hover:bg-accent-teal/90"
+            >
+              Save
+            </button>
+            <button
+              onClick={cancelEditing}
+              className="rounded-lg border border-border-default bg-bg-surface px-4 py-2 text-sm font-medium text-text-muted hover:bg-bg-elevated"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {diffNodes && (
+        <div className="mb-4 rounded-lg border border-border-default bg-bg-surface p-4 text-xs leading-relaxed">
+          <div className="text-text-muted mb-2">Changes since last attempt:</div>
+          <div className="whitespace-pre-wrap break-words">{diffNodes}</div>
+        </div>
+      )}
+
       <div className="space-y-2 text-text-primary text-sm leading-relaxed">
-        {blocks.map((block, i) =>
-          block.type === 'code' ? (
-            <CodeBlock key={i} code={block.content} lang={block.lang} />
-          ) : (
-            <div key={i}>
-              {block.content.split('\n').map((line, j) => {
-                if (!line.trim()) return <br key={j} />;
-                return <p key={j} className="mb-2 last:mb-0">{renderInlineMarkdown(line)}</p>;
-              })}
-            </div>
-          ),
-        )}
+        {renderBlocks(blocks)}
         {isStreaming && (
           <span className="inline-block w-2 h-4 bg-accent-teal animate-pulse rounded-sm ml-0.5 align-text-bottom" />
         )}
@@ -94,50 +224,99 @@ export default function AnswerCard({ answer, isLoading, streamStatus = 'idle', o
   );
 }
 
-interface Block {
-  type: 'text' | 'code';
-  content: string;
-  lang?: string;
+function renderBlocks(blocks: MarkdownBlock[]): React.ReactNode[] {
+  return blocks.map((block, idx) => {
+    switch (block.type) {
+      case 'paragraph':
+        return (
+          <p key={idx} className="mb-3 last:mb-0">
+            {renderMarkdownInline(block.content)}
+          </p>
+        );
+      case 'code':
+        return <CodeBlock key={idx} code={block.content} lang={block.lang} />;
+      case 'blockquote':
+        return (
+          <div
+            key={idx}
+            className="rounded-lg border-l-4 border-accent-teal/60 bg-accent-teal/10 px-4 py-3 my-3 text-sm text-text-primary"
+          >
+            {renderMarkdownInline(block.content)}
+          </div>
+        );
+      case 'list':
+        const indentClasses = ['ml-0', 'ml-4', 'ml-8', 'ml-12', 'ml-16'];
+        const indentLevel = Math.min(indentClasses.length - 1, Math.floor(block.level / 2));
+        return (
+          <div key={idx} className={`my-3 ${indentClasses[indentLevel]}`}>
+            {renderList(block)}
+          </div>
+        );
+      case 'table':
+        return (
+          <div key={idx} className="overflow-x-auto my-4">
+            <table className="min-w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  {block.headers.map((header, hIdx) => (
+                    <th
+                      key={hIdx}
+                      className="border border-border-default bg-bg-surface px-3 py-2 text-left font-semibold"
+                    >
+                      {renderMarkdownInline(header)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, rIdx) => (
+                  <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-bg-surface/50' : ''}>
+                    {row.map((cell, cIdx) => (
+                      <td key={cIdx} className="border border-border-default px-3 py-2">
+                        {renderBlocks(parseMarkdown(cell))}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      default:
+        return null;
+    }
+  });
 }
 
-/** Parse markdown into text blocks and fenced code blocks */
-function parseBlocks(text: string): Block[] {
-  const blocks: Block[] = [];
-  const lines = text.split('\n');
-  let i = 0;
-  let textBuf: string[] = [];
+function renderList(list: Extract<MarkdownBlock, { type: 'list' }>): React.ReactNode {
+  const Component = list.ordered ? 'ol' : 'ul';
 
-  const flushText = () => {
-    if (textBuf.length > 0) {
-      blocks.push({ type: 'text', content: textBuf.join('\n') });
-      textBuf = [];
-    }
-  };
+  const renderItem = (item: { content: string; blocks?: MarkdownBlock[] }, idx: number) => (
+    <li key={idx} className="mb-1">
+      <div className="inline-flex gap-1">{renderMarkdownInline(item.content)}</div>
+      {item.blocks && <div className="ml-5 mt-1">{renderBlocks(item.blocks)}</div>}
+    </li>
+  );
 
-  while (i < lines.length) {
-    const fenceMatch = /^```(\w*)/.exec(lines[i]);
-    if (fenceMatch) {
-      flushText();
-      const lang = fenceMatch[1] || undefined;
-      const codeLines: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith('```')) {
-        codeLines.push(lines[i]);
-        i++;
-      }
-      blocks.push({ type: 'code', content: codeLines.join('\n'), lang });
-      i++; // skip closing ```
-    } else {
-      textBuf.push(lines[i]);
-      i++;
-    }
-  }
-  flushText();
-  return blocks;
+  return (
+    <Component className={list.ordered ? 'list-decimal list-inside' : 'list-disc list-inside'}>
+      {list.items.map(renderItem)}
+    </Component>
+  );
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);
+
+  const prismLang = (lang || 'javascript').toLowerCase().trim();
+  const highlighted = useMemo(() => {
+    const grammar = Prism.languages[prismLang] || Prism.languages.javascript;
+    try {
+      return Prism.highlight(code, grammar, prismLang);
+    } catch {
+      return code;
+    }
+  }, [code, prismLang]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code).then(() => {
@@ -172,60 +351,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
         </button>
       </div>
       <pre className="px-4 py-3 overflow-x-auto text-xs leading-5">
-        <code>{code}</code>
+        <code
+          className={`language-${prismLang}`}
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
       </pre>
     </div>
   );
-}
-
-/** Simple inline markdown renderer for bold, code, and source references */
-function renderInlineMarkdown(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  let remaining = text;
-  let key = 0;
-
-  while (remaining.length > 0) {
-    // Bold
-    const boldMatch = /\*\*(.+?)\*\*/.exec(remaining);
-    // Inline code
-    const codeMatch = /`(.+?)`/.exec(remaining);
-    // Source reference [Source N]
-    const sourceMatch = /\[Source (\d+)]/.exec(remaining);
-
-    // Find the earliest match
-    const matches = [boldMatch, codeMatch, sourceMatch].filter(Boolean) as RegExpExecArray[];
-    if (matches.length === 0) {
-      parts.push(remaining);
-      break;
-    }
-
-    const earliest = matches.reduce((a, b) => (a.index! < b.index! ? a : b));
-    const idx = earliest.index!;
-
-    // Text before the match
-    if (idx > 0) {
-      parts.push(remaining.slice(0, idx));
-    }
-
-    if (earliest === boldMatch) {
-      parts.push(<strong key={key++}>{boldMatch![1]}</strong>);
-      remaining = remaining.slice(idx + boldMatch![0].length);
-    } else if (earliest === codeMatch) {
-      parts.push(
-        <code key={key++} className="text-accent-teal bg-bg-elevated px-1 py-0.5 rounded text-xs">
-          {codeMatch![1]}
-        </code>,
-      );
-      remaining = remaining.slice(idx + codeMatch![0].length);
-    } else if (earliest === sourceMatch) {
-      parts.push(
-        <span key={key++} className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-accent-teal/20 text-accent-teal text-xs font-medium">
-          {sourceMatch![1]}
-        </span>,
-      );
-      remaining = remaining.slice(idx + sourceMatch![0].length);
-    }
-  }
-
-  return parts;
 }
