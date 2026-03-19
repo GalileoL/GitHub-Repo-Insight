@@ -70,8 +70,10 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
     }
   };
 
+  const [isComposing, setIsComposing] = useState(false);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault();
       handleAsk();
     }
@@ -235,6 +237,8 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={() => setIsComposing(false)}
               placeholder="Ask anything about this repository..."
               disabled={isAsking}
               className="w-full rounded-xl border border-border-default bg-bg-surface px-4 py-3 pr-24 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-teal transition-colors disabled:opacity-60"

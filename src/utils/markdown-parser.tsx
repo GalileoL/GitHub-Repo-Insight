@@ -1,6 +1,7 @@
 import React from 'react';
 
 export type MarkdownBlock =
+  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; content: string }
   | { type: 'paragraph'; content: string }
   | { type: 'code'; content: string; lang?: string }
   | { type: 'blockquote'; content: string }
@@ -69,6 +70,25 @@ export function parseMarkdown(text: string): MarkdownBlock[] {
         blocks.push({ type: 'table', headers, rows });
         continue;
       }
+    }
+
+    // Heading (supports # to ######)
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length as 1 | 2 | 3 | 4 | 5 | 6;
+      const rest = headingMatch[2];
+
+      // If line contains additional text after a short heading (typical LLM output),
+      // split it into a heading + paragraph to avoid rendering a huge heading.
+      const words = rest.trim().split(/\s+/);
+      if (words.length > 2) {
+        blocks.push({ type: 'heading', level, content: words[0] });
+        blocks.push({ type: 'paragraph', content: words.slice(1).join(' ') });
+      } else {
+        blocks.push({ type: 'heading', level, content: rest });
+      }
+      i += 1;
+      continue;
     }
 
     // Blockquote
