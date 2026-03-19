@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import AnswerCard from '../features/rag/components/AnswerCard';
 import SourceList from '../features/rag/components/SourceList';
+import type { Source } from '../features/rag/types';
 
 interface ShareEntry {
   id: string;
   repo: string;
   question: string;
   answer: string;
-  sources: Array<Record<string, unknown>>;
+  sources: Source[];
   createdAt: number;
 }
 
@@ -20,6 +21,7 @@ export default function SharePage() {
 
   useEffect(() => {
     if (!id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
 
@@ -86,7 +88,7 @@ export default function SharePage() {
 
       <AnswerCard answer={entry.answer} isLoading={false} />
 
-      {entry.sources?.length > 0 && <SourceList sources={entry.sources as any} />}
+      {entry.sources?.length > 0 && <SourceList sources={entry.sources} />}
 
       <div className="text-sm text-text-muted">
         <Link to="/" className="text-accent-teal hover:underline">

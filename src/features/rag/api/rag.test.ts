@@ -17,7 +17,7 @@ function createReadableStreamFromStrings(strings: string[]) {
 }
 
 describe('askRepoStream', () => {
-  let originalFetch: any;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -38,11 +38,11 @@ describe('askRepoStream', () => {
       ok: true,
       headers: { get: () => 'req-123' },
       body: stream,
-    })) as any;
+    })) as unknown as typeof globalThis.fetch;
 
     const received: string[] = [];
     const statuses: string[] = [];
-    const metrics: any[] = [];
+    const metrics: Array<ReturnType<ClientMetricsRecorder['getSnapshot']>> = [];
 
     await askRepoStream('o/r', 'q', 'token', {
       onDelta: (delta, seq) => {
@@ -73,7 +73,7 @@ describe('askRepoStream', () => {
       ok: true,
       headers: { get: () => 'req-123' },
       body: stream,
-    })) as any;
+    })) as unknown as typeof globalThis.fetch;
 
     const received: string[] = [];
 
@@ -95,7 +95,7 @@ describe('askRepoStream', () => {
       ok: true,
       headers: { get: () => 'req-123' },
       body: stream,
-    })) as any;
+    })) as unknown as typeof globalThis.fetch;
 
     const errors: string[] = [];
 

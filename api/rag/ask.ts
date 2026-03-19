@@ -127,7 +127,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
         startHeartbeat();
 
-        let seq = 0;
         for await (const delta of generator) {
           if (aborted) {
             metrics.recordError('Stream aborted by client');

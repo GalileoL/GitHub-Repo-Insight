@@ -255,7 +255,6 @@ export async function askRepoStream(
     const decoder = new TextDecoder();
     let buffer = '';
     let firstByteReceived = false;
-    let deltaCount = 0;
     let lastSeenSeq = typeof lastSeq === 'number' ? lastSeq : 0;
 
     while (true) {
@@ -295,7 +294,6 @@ export async function askRepoStream(
               lastSeenSeq = seq;
             }
 
-            deltaCount++;
             metrics.incrementChunkCount();
             onDelta?.(event.content, seq);
           } else if (event.type === 'sources' && event.sources) {

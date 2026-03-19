@@ -47,6 +47,26 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
     return () => window.removeEventListener('keydown', handler);
   }, [isStreaming, onCancel]);
 
+  const blocks = useMemo(() => parseMarkdown(answer), [answer]);
+
+  const diffNodes = useMemo(() => {
+    if (!previousAnswer || previousAnswer === answer) return null;
+
+    const diff = diffWords(previousAnswer, answer);
+    return diff.map((part, idx) => {
+      const className = part.added
+        ? 'text-accent-green'
+        : part.removed
+        ? 'text-accent-red line-through'
+        : '';
+      return (
+        <span key={idx} className={className}>
+          {part.value}
+        </span>
+      );
+    });
+  }, [answer, previousAnswer]);
+
   const downloadMarkdown = () => {
     const blob = new Blob([answer], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -113,25 +133,6 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
     );
   }
 
-  const blocks = parseMarkdown(answer);
-
-  const diffNodes = useMemo(() => {
-    if (!previousAnswer || previousAnswer === answer) return null;
-
-    const diff = diffWords(previousAnswer, answer);
-    return diff.map((part, idx) => {
-      const className = part.added
-        ? 'text-accent-green'
-        : part.removed
-        ? 'text-accent-red line-through'
-        : '';
-      return (
-        <span key={idx} className={className}>
-          {part.value}
-        </span>
-      );
-    });
-  }, [answer, previousAnswer]);
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-surface p-6">
@@ -244,7 +245,7 @@ function renderBlocks(blocks: MarkdownBlock[]): React.ReactNode[] {
             {renderMarkdownInline(block.content)}
           </div>
         );
-      case 'list':
+      case 'list': {
         const indentClasses = ['ml-0', 'ml-4', 'ml-8', 'ml-12', 'ml-16'];
         const indentLevel = Math.min(indentClasses.length - 1, Math.floor(block.level / 2));
         return (
@@ -252,6 +253,7 @@ function renderBlocks(blocks: MarkdownBlock[]): React.ReactNode[] {
             {renderList(block)}
           </div>
         );
+      }
       case 'table':
         return (
           <div key={idx} className="overflow-x-auto my-4">
