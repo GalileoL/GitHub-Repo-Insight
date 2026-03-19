@@ -187,13 +187,16 @@ lib/
 
 ### Stream interruption handling
 
-- Implemented robustness:
-    - guards against missing `res.body` in the streaming client
-    - ignores malformed SSE JSON lines via `try/catch`
-- Current limitations:
-    - no explicit user-cancel (AbortController)
-    - no resume/reconnect protocol for dropped streams
-    - no partial-answer recovery after connection loss
+- ✅ **Phase 1 (2026-03-19)** — User-initiated cancellation & server-aware disconnect:
+    - Client-side `AbortController` support; user can click "Stop" during streaming
+    - Server listens for client disconnect (`req.on('close')`) and aborts LLM stream
+    - Unified error event protocol; partial answers preserved on cancel
+    - `useAskRepo` exports: `cancel()`, `retry()`, `streamStatus`, `streamError`
+    - UI improvements: status indicators, stop/retry buttons, error boundary
+- 🔄 **Phase 2 (planned)** — Reconnect protocol & observability:
+    - Heartbeat events to prevent proxy timeout
+    - Resume/partial-continue stream from last received position
+    - Metrics: TTFB, stream duration, cancel rate, failure distribution
 
 ## Deployment
 

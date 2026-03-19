@@ -48,21 +48,38 @@ Keep it up to date when architecture, APIs, or conventions change.
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: GitHub token verify + daily ask/ingest limits in Redis
 
-## 5) SSE Streaming Notes
-- Server side:
-  - Endpoint: `POST /api/rag/ask` with body `{ stream: true }`
-  - Headers set in `api/rag/ask.ts`:
-    - `Content-Type: text/event-stream`
-    - `Cache-Control: no-cache`
-    - `Connection: keep-alive`
-    - `X-Accel-Buffering: no`
-  - Event payloads:
-    - `data: {"type":"delta","content":"..."}`
-    - `data: {"type":"sources","sources":[...]}`
-    - `data: [DONE]`
-- Client side:
-  - `src/features/rag/api/rag.ts` reads `fetch(...).body.getReader()`
-  - Parses lines prefixed with `data: ` and dispatches delta/sources callbacks
+## 5) SSE Streaming Notes (UPDATED: Phase 1 Optimization)
+
+### Protocol & Lifecycle (v2.0)
+- Server side (`api/rag/ask.ts`):
+  - Listens for client disconnect via `req.on('close', 'error')`
+  - If detected, aborts upstream LLM stream and sends error event
+  - Event format: `{ type: 'delta'|'sources'|'error', content?: string, message?: string, sources?: [] }`
+  - Clean termination: `[DONE]` token ends stream
+- Client side (`src/features/rag/api/rag.ts`):
+  - Accepts `AbortSignal` for cancellation
+  - Parses events with error handling for fragmented SSE
+  - Dispatches via callbacks: onDelta, onSources, onError, onStatus
+
+### User Control (v2.0)
+- `useAskRepo` hook exports: `cancel()`, `retry()`, `streamStatus`, `streamError`
+- Stream states: `idle` | `connecting` | `streaming` | `done` | `cancelled` | `error`
+- UI (`AnswerCard`, `AskRepoPanel`):
+  - Shows "Stop" button during streaming
+  - Shows "Retry" button if cancelled
+  - Preserves partial answer on cancel
+
+### Error Handling (v2.0)
+- Server detects client disconnect and stops LLM computation
+- Client handles parse errors per-line (continues on SyntaxError)
+- Cleanly distinguishes cancelled vs error states
+- Partial answers preserved for manual re-indexing or manual continuation
+
+### Next Phase (TODO)
+- Reconnect/resume protocol (save position in stream)
+- Heartbeat events (prevent nginx/proxy timeout)
+- Metrics: TTFB, duration, cancel rate, fail rate
+- Dedicated tests for stream interruption scenarios
 
 ## 6) Markdown Rendering Notes
 - Rendering is custom, not `react-markdown`.
@@ -76,14 +93,21 @@ Keep it up to date when architecture, APIs, or conventions change.
     - `[Source N]` token rendering
 - This is intentionally constrained for controlled LLM output.
 
-## 7) Stream Interruption / Robustness Status
-- Already handled:
-  - Guard for missing `res.body` before streaming read
-  - Per-line JSON parse wrapped in `try/catch` to skip malformed lines
-- Not fully handled yet:
-  - No explicit user cancel (AbortController)
-  - No resume/reconnect protocol for dropped streams
-  - No partial-answer recovery strategy after network interruption
+## 7) Stream Interruption / Robustness Status (UPDATED: Phase 1 Complete)
+- ✅ Implemented on Phase 1:
+  - Client-side AbortController for user-initiated cancel
+  - Server detects client disconnect (req.on('close')) and stops LLM stream
+  - Unified error event (`type: 'error'`) for both server and parse errors
+  - Partial answer preservation on cancel
+  - Retry mechanism via `useAskRepo.retry()`
+- 🔄 In Progress:
+  - Enhanced SSE parser for fragmented events
+  - Remove timeout concerns
+- ❌ Not yet implemented:
+  - Reconnect protocol (resume from position)
+  - Heartbeat events
+  - Metrics & monitoring (TTFB, duration, cancel rate)
+  - Comprehensive stream interrupt tests
 
 ## 8) Commands
 - Install: `npm install`
@@ -114,12 +138,13 @@ Keep it up to date when architecture, APIs, or conventions change.
 
 ## 10) Update Checklist (When Editing This Repo)
 Update this file when any of these changes happen:
-- API contract changes (`api/rag/*`, request or response shape)
+- API contract changes (`api/rag/*`, request or response shape) ✓ track phase updates
 - Retrieval/rerank/LLM pipeline logic changes
-- Stream payload format changes
+- Stream payload format changes ✓ SSE event type updates
 - Markdown rendering capability changes
 - Auth/rate-limit/security behavior changes
 - Build scripts or required env vars change
+- Stream control flow or status state changes ✓ useAskRepo exports
 
 ## 11) Known Risks / Follow-Ups
 - Stream UX can improve with stop/retry/reconnect.

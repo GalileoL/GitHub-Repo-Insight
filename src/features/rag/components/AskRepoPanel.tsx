@@ -227,15 +227,22 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
             </div>
           )}
 
-          {/* Answer */}
+          {/* Answer + sources */}
           {(ask.isPending || ask.isStreaming || ask.streamingAnswer) && (
             <div className="space-y-4">
               <AnswerCard
                 answer={ask.streamingAnswer}
                 isLoading={ask.isPending && !ask.streamingAnswer}
-                isStreaming={ask.isStreaming}
+                streamStatus={ask.streamStatus}
+                onCancel={ask.cancel}
+                onRetry={ask.retry}
               />
               {ask.sources.length > 0 && <SourceList sources={ask.sources} />}
+              {ask.streamStatus === 'cancelled' && ask.streamError && (
+                <div className="rounded-lg border border-accent-red/30 bg-accent-red/5 p-3">
+                  <p className="text-xs text-accent-red">{ask.streamError}</p>
+                </div>
+              )}
             </div>
           )}
 

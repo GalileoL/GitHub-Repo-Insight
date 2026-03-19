@@ -1,18 +1,23 @@
 import { useState, useCallback } from 'react';
+import type { StreamStatus } from '../hooks/useAskRepo';
 
 interface AnswerCardProps {
   answer: string;
   isLoading: boolean;
-  isStreaming?: boolean;
+  streamStatus?: StreamStatus;
+  onCancel?: () => void;
+  onRetry?: () => void;
 }
 
-export default function AnswerCard({ answer, isLoading, isStreaming }: AnswerCardProps) {
+export default function AnswerCard({ answer, isLoading, streamStatus = 'idle', onCancel, onRetry }: AnswerCardProps) {
+  const isStreaming = streamStatus === 'streaming' || streamStatus === 'connecting';
+
   if (isLoading && !answer) {
     return (
       <div className="rounded-xl border border-border-default bg-bg-surface p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="h-5 w-5 rounded-full border-2 border-accent-teal border-t-transparent animate-spin" />
-          <span className="text-sm text-text-muted">Thinking...</span>
+          <span className="text-sm text-text-muted">{streamStatus === 'connecting' ? 'Connecting…' : 'Thinking...'}</span>
         </div>
         <div className="space-y-3 animate-pulse">
           <div className="h-4 bg-bg-elevated rounded w-full" />
@@ -23,11 +28,51 @@ export default function AnswerCard({ answer, isLoading, isStreaming }: AnswerCar
     );
   }
 
+  if (streamStatus === 'cancelled') {
+    return (
+      <div className="rounded-xl border border-accent-amber/30 bg-accent-amber/5 p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-accent-amber">Stream cancelled</h3>
+          <span className="text-xs text-text-muted">{answer.length} chars received</span>
+        </div>
+        <div className="text-text-primary text-sm leading-relaxed mb-4 max-h-64 overflow-y-auto">
+          {answer || '(No content received)'}
+        </div>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="text-xs text-accent-amber hover:text-accent-amber/80 transition-colors underline"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const blocks = parseBlocks(answer);
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-surface p-6">
-      <h3 className="text-sm font-medium text-text-muted uppercase tracking-wider mb-3">Answer</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-text-muted uppercase tracking-wider">Answer</h3>
+        {isStreaming && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <div className="h-1.5 w-1.5 bg-accent-teal rounded-full animate-pulse" />
+              <span className="text-xs text-text-muted">streaming</span>
+            </div>
+            {onCancel && (
+              <button
+                onClick={onCancel}
+                className="text-xs text-text-muted hover:text-accent-red transition-colors px-2 py-0.5 rounded hover:bg-accent-red/10"
+              >
+                Stop
+              </button>
+            )}
+          </div>
+        )}
+      </div>
       <div className="space-y-2 text-text-primary text-sm leading-relaxed">
         {blocks.map((block, i) =>
           block.type === 'code' ? (

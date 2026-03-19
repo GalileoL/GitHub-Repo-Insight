@@ -5,13 +5,17 @@ import { useAuthStore } from '../../../store/auth';
 import { useAskHistory } from './useAskHistory';
 import type { Source } from '../types';
 
+export type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'done' | 'cancelled' | 'error';
+
 export function useAskRepo(repo: string) {
   const token = useAuthStore((s) => s.token);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [sources, setSources] = useState<Source[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle');
+  const [streamError, setStreamError] = useState<string | null>(null);
   const answerRef = useRef('');
   const sourcesRef = useRef<Source[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const { history, addEntry, clearHistory } = useAskHistory(repo);
 
   const mutation = useMutation<void, Error, string>({
@@ -19,26 +23,39 @@ export function useAskRepo(repo: string) {
       // Reset state
       setStreamingAnswer('');
       setSources([]);
-      setIsStreaming(true);
+      setStreamStatus('idle');
+      setStreamError(null);
       answerRef.current = '';
       sourcesRef.current = [];
+      
+      abortControllerRef.current = new AbortController();
 
       try {
         await askRepoStream(
           repo,
           question,
           token ?? undefined,
-          (delta) => {
-            answerRef.current += delta;
-            setStreamingAnswer((prev) => prev + delta);
-          },
-          (newSources) => {
-            sourcesRef.current = newSources;
-            setSources(newSources);
+          {
+            signal: abortControllerRef.current.signal,
+            onDelta: (delta) => {
+              answerRef.current += delta;
+              setStreamingAnswer((prev) => prev + delta);
+            },
+            onSources: (newSources) => {
+              sourcesRef.current = newSources;
+              setSources(newSources);
+            },
+            onError: (error) => {
+              setStreamError(error);
+              setStreamStatus('error');
+            },
+            onStatus: (status) => {
+              setStreamStatus(status);
+            },
           },
         );
-        // Save completed answer to history (deduplicate by question text)
-        if (answerRef.current) {
+        // Save completed answer to history only if fully streamed
+        if (answerRef.current && streamStatus !== 'error') {
           addEntry({
             question,
             answer: answerRef.current,
@@ -47,10 +64,25 @@ export function useAskRepo(repo: string) {
           });
         }
       } finally {
-        setIsStreaming(false);
+        abortControllerRef.current = null;
       }
     },
   });
+
+  /** Abort the ongoing stream and preserve the partial answer */
+  const cancel = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setStreamStatus('cancelled');
+    }
+  }, []);
+
+  /** Retry streaming the same answer from where it left off (partial recovery) */
+  const retry = useCallback(() => {
+    if (mutation.variables) {
+      mutation.mutate(mutation.variables);
+    }
+  }, [mutation]);
 
   /** Show a cached history entry directly without making an API call */
   const showCached = useCallback(
@@ -58,7 +90,8 @@ export function useAskRepo(repo: string) {
       mutation.reset();
       setStreamingAnswer(entry.answer);
       setSources(entry.sources);
-      setIsStreaming(false);
+      setStreamStatus('done');
+      setStreamError(null);
     },
     [mutation],
   );
@@ -66,7 +99,12 @@ export function useAskRepo(repo: string) {
   const reset = useCallback(() => {
     setStreamingAnswer('');
     setSources([]);
-    setIsStreaming(false);
+    setStreamStatus('idle');
+    setStreamError(null);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     mutation.reset();
   }, [mutation]);
 
@@ -75,11 +113,15 @@ export function useAskRepo(repo: string) {
     showCached,
     streamingAnswer,
     sources,
-    isStreaming,
+    streamStatus,
+    streamError,
+    cancel,
+    retry,
+    isStreaming: streamStatus === 'streaming' || streamStatus === 'connecting',
     isPending: mutation.isPending,
-    isError: mutation.isError,
+    isError: mutation.isError || streamStatus === 'error',
     error: mutation.error,
-    isSuccess: mutation.isSuccess,
+    isSuccess: streamStatus === 'done',
     reset,
     history,
     clearHistory,

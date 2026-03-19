@@ -73,21 +73,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const wantStream = req.body?.stream === true;
 
     if (wantStream) {
-      // --- SSE streaming ---
+      // --- SSE streaming with client disconnect monitoring ---
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
 
-      const sources = buildSources(chunks);
+      let aborted = false;
+      const cleanup = () => { aborted = true; };
+      req.on('close', cleanup);
+      req.on('error', cleanup);
 
-      for await (const delta of generateAnswerStream(question, repo, chunks)) {
-        res.write(`data: ${JSON.stringify({ type: 'delta', content: delta })}\n\n`);
+      try {
+        const sources = buildSources(chunks);
+        const generator = generateAnswerStream(question, repo, chunks);
+
+        for await (const delta of generator) {
+          if (aborted) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream aborted by client' })}\n\n`);
+            break;
+          }
+          res.write(`data: ${JSON.stringify({ type: 'delta', content: delta })}\n\n`);
+        }
+
+        if (!aborted) {
+          res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
+          res.write(`data: [DONE]\n\n`);
+        }
+      } catch (streamErr) {
+        if (!res.headersSent) {
+          res.status(500).json({ error: streamErr instanceof Error ? streamErr.message : 'Stream error' });
+        } else {
+          res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream processing error' })}\n\n`);
+        }
+      } finally {
+        req.removeListener('close', cleanup);
+        req.removeListener('error', cleanup);
+        res.end();
       }
-
-      res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
-      res.write(`data: [DONE]\n\n`);
-      res.end();
     } else {
       // --- Non-streaming (backwards compatible) ---
       const result = await generateAnswer(question, repo, chunks);
