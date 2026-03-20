@@ -149,8 +149,8 @@ Keep it up to date when architecture, APIs, or conventions change.
 - **Library**: `@tanstack/react-virtual` v3 (`useVirtualizer`)
 - **Type**: Variable-height (不定高) — items with release notes body are taller (~92-96px) than tag-only items (~60-64px)
 - **Mechanism**: `ref={virtualizer.measureElement}` + `data-index` on each item; ResizeObserver measures actual DOM height after first render; `estimateSize: () => 80` is initial estimate only
-- **Body summary**: `stripMarkdown()` (module-scope) strips markdown → `[...text].slice(0, 160).join('')` (emoji-safe) → `line-clamp-2`
-- **Data flow**: `GitHubRelease.body` → `transformReleases` (`body: release.body`) → `ReleaseTimelineData.body?: string | null` → component
+- **Body summary**: `stripMarkdown()` (module-scope) uses context-aware replacements (capturing groups for bold/italic, line-anchored `^` for headings/lists/blockquotes) — avoids corrupting `C#`, `bug-fix`, version strings. `truncateCodePoints(str, 160)` (early-exit iterator) replaces `[...str].slice()` for emoji-safe, allocation-efficient truncation → `line-clamp-2`
+- **Data flow**: `GitHubRelease.body` → `transformReleases` (`body: release.body`) → `ReleaseTimelineData.body: string | null` (non-optional) → component
 - `SourceList` also uses `@tanstack/react-virtual` but fixed-height (92px)
 
 ## 11) Update Checklist (When Editing This Repo)
