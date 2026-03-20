@@ -117,6 +117,11 @@ export default function ReleaseTimeline({
                         <span className="text-xs text-text-secondary truncate">{release.name}</span>
                       )}
                     </div>
+                    {release.body && (
+                      <p className="text-xs text-text-muted mt-1 line-clamp-2">
+                        {[...stripMarkdown(release.body)].slice(0, 160).join('')}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
