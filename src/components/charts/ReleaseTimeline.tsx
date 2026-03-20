@@ -22,7 +22,7 @@ function stripMarkdown(text: string): string {
     .replace(/_(.*?)_/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
-    .replace(/^[\-*+]\s+/gm, '')
+    .replace(/^[-*+]\s+/gm, '')
     .replace(/^>\s*/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
