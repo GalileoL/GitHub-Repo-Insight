@@ -37,6 +37,7 @@ export interface ReleaseTimelineData {
   date: string;
   url: string;
   prerelease: boolean;
+  body: string | null;
 }
 
 export interface HeatmapData {
@@ -161,6 +162,7 @@ export function transformReleases(data: GitHubRelease[]): ReleaseTimelineData[] 
       date: dayjs(release.published_at).format('MMM DD, YYYY'),
       url: release.html_url,
       prerelease: release.prerelease,
+      body: release.body,
     }));
 }
 

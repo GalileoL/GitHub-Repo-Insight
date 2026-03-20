@@ -12,7 +12,31 @@ interface ReleaseTimelineProps {
   fetchNextPage?: () => void;
 }
 
-const ITEM_HEIGHT = 64;
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]*`/g, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/_(.*?)_/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[-*+]\s+/gm, '')
+    .replace(/^>\s*/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncateCodePoints(str: string, max: number): string {
+  let count = 0;
+  let i = 0;
+  while (i < str.length && count < max) {
+    i += (str.codePointAt(i)! > 0xffff) ? 2 : 1;
+    count++;
+  }
+  return str.slice(0, i);
+}
 
 export default function ReleaseTimeline({
   data,
@@ -28,7 +52,7 @@ export default function ReleaseTimeline({
   const virtualizer = useVirtualizer({
     count: data?.length ?? 0,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ITEM_HEIGHT,
+    estimateSize: () => 80,
     overscan: 5,
   });
 
@@ -109,6 +133,11 @@ export default function ReleaseTimeline({
                         <span className="text-xs text-text-secondary truncate">{release.name}</span>
                       )}
                     </div>
+                    {release.body && (
+                      <p className="text-xs text-text-muted mt-1 line-clamp-2">
+                        {truncateCodePoints(stripMarkdown(release.body), 160)}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
