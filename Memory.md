@@ -143,7 +143,17 @@ Keep it up to date when architecture, APIs, or conventions change.
   - `RAG_DAILY_INGEST_LIMIT`
   - `ADMIN_GITHUB_USERS`
 
-## 10) Update Checklist (When Editing This Repo)
+## 10) Virtual List Implementation
+
+- **Component**: `src/components/charts/ReleaseTimeline.tsx`
+- **Library**: `@tanstack/react-virtual` v3 (`useVirtualizer`)
+- **Type**: Variable-height (不定高) — items with release notes body are taller (~92-96px) than tag-only items (~60-64px)
+- **Mechanism**: `ref={virtualizer.measureElement}` + `data-index` on each item; ResizeObserver measures actual DOM height after first render; `estimateSize: () => 80` is initial estimate only
+- **Body summary**: `stripMarkdown()` (module-scope) strips markdown → `[...text].slice(0, 160).join('')` (emoji-safe) → `line-clamp-2`
+- **Data flow**: `GitHubRelease.body` → `transformReleases` (`body: release.body`) → `ReleaseTimelineData.body?: string | null` → component
+- `SourceList` also uses `@tanstack/react-virtual` but fixed-height (92px)
+
+## 11) Update Checklist (When Editing This Repo)
 Update this file when any of these changes happen:
 - API contract changes (`api/rag/*`, request or response shape) ✓ track phase updates
 - Retrieval/rerank/LLM pipeline logic changes
