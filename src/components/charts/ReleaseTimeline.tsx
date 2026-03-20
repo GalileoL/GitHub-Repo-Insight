@@ -12,7 +12,15 @@ interface ReleaseTimelineProps {
   fetchNextPage?: () => void;
 }
 
-const ITEM_HEIGHT = 64;
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]*`/g, '')
+    .replace(/\*\*|__|[*_#>-]/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export default function ReleaseTimeline({
   data,
@@ -28,7 +36,7 @@ export default function ReleaseTimeline({
   const virtualizer = useVirtualizer({
     count: data?.length ?? 0,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ITEM_HEIGHT,
+    estimateSize: () => 80,
     overscan: 5,
   });
 
