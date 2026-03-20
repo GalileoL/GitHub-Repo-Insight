@@ -231,7 +231,13 @@ export function useAskRepo(repo: string) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const retryable = /failed to fetch|network|timeout|connection|abort/i.test(message);
-          if (retryable && retryCountRef.current < 3) {
+          const sessionGone = /session not found|not found or expired/i.test(message);
+          if (sessionGone) {
+            // Session expired or was never stored — fall back to a fresh ask
+            requestIdRef.current = null;
+            setStreamError(null);
+            mutation.mutate(mutation.variables!);
+          } else if (retryable && retryCountRef.current < 3) {
             retryCountRef.current += 1;
             const delay = 1000 * Math.pow(2, retryCountRef.current - 1);
             setStreamStatus('reconnecting');
