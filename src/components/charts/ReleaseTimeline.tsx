@@ -16,10 +16,26 @@ function stripMarkdown(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, '')
     .replace(/`[^`]*`/g, '')
-    .replace(/\*\*|__|[*_#>-]/g, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/_(.*?)_/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[\-*+]\s+/gm, '')
+    .replace(/^>\s*/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function truncateCodePoints(str: string, max: number): string {
+  let count = 0;
+  let i = 0;
+  while (i < str.length && count < max) {
+    i += (str.codePointAt(i)! > 0xffff) ? 2 : 1;
+    count++;
+  }
+  return str.slice(0, i);
 }
 
 export default function ReleaseTimeline({
@@ -119,7 +135,7 @@ export default function ReleaseTimeline({
                     </div>
                     {release.body && (
                       <p className="text-xs text-text-muted mt-1 line-clamp-2">
-                        {[...stripMarkdown(release.body)].slice(0, 160).join('')}
+                        {truncateCodePoints(stripMarkdown(release.body), 160)}
                       </p>
                     )}
                   </div>

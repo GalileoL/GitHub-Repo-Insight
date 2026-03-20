@@ -37,7 +37,7 @@ export interface ReleaseTimelineData {
   date: string;
   url: string;
   prerelease: boolean;
-  body?: string | null;
+  body: string | null;
 }
 
 export interface HeatmapData {
