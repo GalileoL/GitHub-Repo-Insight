@@ -69,11 +69,12 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Shows "Retry" button if cancelled
   - Preserves partial answer on cancel
 
-### Error Handling (v2.0)
+### Error Handling (v2.1)
 - Server detects client disconnect and stops LLM computation
 - Client handles parse errors per-line (continues on SyntaxError)
 - Cleanly distinguishes cancelled vs error states
 - Partial answers preserved for manual re-indexing or manual continuation
+- **Stop → Retry bug fixed (2026-03-20):** resume path was not falling back when session not found (404), causing error state + empty red box instead of a fresh ask. Fix: detect `session not found` in `performResume` catch → clear `requestIdRef` → `mutation.mutate(question)`. Also fixed `AskRepoPanel` error box to show `streamError ?? mutation.error?.message` (were different error sources).
 
 ### Next Phase (TODO)
 - Reconnect/resume protocol (save position in stream)

@@ -185,7 +185,45 @@ A: 全链路 SSE（Server-Sent Events）：
 
 ---
 
-### 第四部分：前端架构
+**Q31: Stop 之后点 Retry 出现空红框的 bug，是什么原因？怎么修的？**
+
+A: 这是一个**状态管理与错误分类**的双重 bug，很典型。
+
+**现象：** 流式生成时点 Stop → 点 Retry → 出现空红色错误框，不重新生成回答，控制台报 `/api/rag/resume 404`。
+
+**Bug A — 错误的 resume 路径没有降级**
+
+`retry()` 的逻辑：只要 `requestIdRef.current` 有值（从 `X-Request-ID` 响应头里存的），就走 resume 路径调 `/api/rag/resume`。
+
+问题在于：`/api/rag/resume` 从 Redis 读取 stream session（用于恢复上次流的上下文），而 session 可能不存在——比如流完成后 `ask.ts` 会主动删除它、Redis 5 分钟 TTL 到期、或 Serverless 冷启动时 Redis 连接失败。
+
+这时 `resume.ts` 返回 404，`performResume` 的 catch 只判断了 `network/timeout/abort` 类可重试错误，404 不在范围内，直接 `setStreamStatus('error')` → 用户看到 error 状态而不是一个新答案。
+
+**修复：** 在 catch 里加 `sessionGone` 判断，匹配 "session not found" 类错误，清掉 `requestIdRef`，直接 fall back 到 `mutation.mutate(question)` 重新发起一次正常的 ask：
+```ts
+const sessionGone = /session not found|not found or expired/i.test(message);
+if (sessionGone) {
+  requestIdRef.current = null;
+  setStreamError(null);
+  mutation.mutate(mutation.variables!);
+}
+```
+
+**Bug B — 错误框显示空内容**
+
+`AskRepoPanel` 的错误框条件是 `ask.isError`（derived: `mutation.isError || streamStatus === 'error'`），但内容用的是 `ask.error?.message`（= `mutation.error.message`）。resume 失败走的是 `setStreamError(msg)` 而不是 mutation 报错，所以 `mutation.error` 是 null，框里没有文字。
+
+**修复：** 改为 `ask.streamError ?? ask.error?.message`，同时加条件保证文字非空才渲染框：
+```tsx
+{ask.isError && (ask.streamError || ask.error?.message) && (
+  <p className="text-sm text-accent-red">{ask.streamError ?? ask.error?.message}</p>
+)}
+```
+
+**本质教训：** `isError` 是派生状态，它的数据来源（mutation error vs stream error）不一致时，显示层不能直接用 `error?.message`，要对应 error 的实际来源。
+
+---
+
 
 **Q12: TanStack Query 和 Zustand 分别管理什么状态？**
 

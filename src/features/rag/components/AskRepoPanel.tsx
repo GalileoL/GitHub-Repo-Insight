@@ -261,9 +261,9 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
           )}
 
           {/* Error */}
-          {ask.isError && (
+          {ask.isError && (ask.streamError || ask.error?.message) && (
             <div className="rounded-xl border border-accent-red/30 bg-accent-red/5 p-4">
-              <p className="text-sm text-accent-red">{ask.error?.message}</p>
+              <p className="text-sm text-accent-red">{ask.streamError ?? ask.error?.message}</p>
             </div>
           )}
 
