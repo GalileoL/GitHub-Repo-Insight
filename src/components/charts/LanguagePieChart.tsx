@@ -67,7 +67,7 @@ export default function LanguagePieChart({ data, loading, error }: LanguagePieCh
   const chartRef = useECharts(option);
 
   return (
-    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No language data">
+    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No language data" skeletonVariant="pie">
       <div ref={chartRef} className="h-full w-full" />
     </ChartContainer>
   );

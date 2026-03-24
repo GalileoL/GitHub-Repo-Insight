@@ -11,6 +11,8 @@ Built as a frontend engineering showcase using modern React patterns.
 ## Screenshots
 
 > *Screenshots coming soon — run `npm run dev` and explore any repository to see the dashboard in action.*
+> ![dashboard_example](/image/image.png)
+> ![AI_analuze_page](/image/image-1.png)
 
 ## Features
 

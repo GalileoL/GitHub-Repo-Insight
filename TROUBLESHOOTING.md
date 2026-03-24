@@ -132,6 +132,16 @@ Check the Development Command in the Project Settings or the `dev` script in `pa
 - 输入框按 Enter 时会判断 IME 是否正在组合中（`compositionstart`/`compositionend`），只有**不在组合态**时才允许 Enter 触发发送。
   - 相关文件：`src/features/rag/components/AskRepoPanel.tsx`
 
+
+## 10. Web Worker postMessage 缺少数据结构验证（安全提示）
+
+**现象**：CodeQL 报告 `postMessage` 处理器缺少 origin/数据结构校验，建议防御可疑消息。
+
+**解决（已实现）**：
+- `src/workers/diffWorker.ts` 增加 `isDiffMessage` 类型保护函数，仅处理 `{ previous: string; current: string }`。
+- 如果消息形态不匹配，直接 `return`。
+- 确保未引入外部依赖、兼容 Worker 调用，且行为与外部无差异。
+
 ---
 
 ## 10. Stop → Retry 显示空红色错误框，不生成新回答
@@ -188,5 +198,56 @@ if (sessionGone) {
 
 
 - 如果未来需要进一步加固：
-  - 可在 `AnswerCard` 做“前 2k 字符先渲染、剩余按需加载”，避免一次性生成超长节点。
+  - 可在 `AnswerCard` 做”前 2k 字符先渲染、剩余按需加载”，避免一次性生成超长节点。
   - 可把 `SourceList` 的数据源改为后端分页或按需拉取，减少前端数据量。
+
+---
+
+## 11. Issues & Pull Requests 图表加载慢（~13 秒）
+
+**现象：** Dashboard 上其他图表（Languages、Contributors、Commits）秒级加载完成，但 “Issues & Pull Requests” 图表需要约 13 秒才能显示数据。
+
+**根本原因：GitHub Search API 速率限制导致的批次延迟**
+
+`getMonthlyIssuePrCounts`（`src/api/github.ts`）需要查询 **12 个月 × 2 类（Issue + PR）= 24 次** API 调用，使用的是 GitHub `/search/issues` 端点。
+
+该端点的速率限制为：
+- 认证用户：30 次/分钟
+- 未认证用户：10 次/分钟
+
+为避免触发限流，代码采用**批次请求 + 强制延迟**策略：
+
+```ts
+// 每批处理 2 个月（4 个请求），批次之间强制等待 2500ms
+const batchSize = 2;
+for (let i = 0; i < monthRanges.length; i += batchSize) {
+  if (i > 0) await new Promise((r) => setTimeout(r, 2500));
+  // 并发执行本批次 4 个请求...
+}
+```
+
+**时间开销分解（12 个月）：**
+- 6 批次，批次间有 5 次 2500ms 延迟 = **12.5 秒**（纯延迟）
+- 加上每批次的网络请求时间
+- **总计约 13-15 秒**
+
+**为什么其他图表快？**
+
+其他图表使用专用 REST 端点，一次请求即可返回完整数据：
+- Languages：`/repos/:owner/:repo/languages`（1 次请求）
+- Contributors：`/repos/:owner/:repo/stats/contributors`（1 次请求）
+- Commits：`/repos/:owner/:repo/stats/commit_activity`（1 次请求）
+
+Issues/PRs 没有”按月统计”的现成端点，只能逐月调用 Search API。
+
+**这是设计上的权衡，不是 bug。** 去掉延迟会导致大量 429 Rate Limit 错误。
+
+**潜在优化方向（未实施）：**
+1. **缩短时间跨度**：改为 6 个月而非 12 个月，延迟减半（约 6 秒）
+2. **增大批次**：认证用户理论上可以把 batchSize 从 2 增加到 3（6 个请求/批），但余量很小，风险高
+3. **渐进式更新**：每个批次完成后立即更新图表，而非等全部数据就绪——这需要修改 hook 返回流式数据，改动较大
+4. **GitHub GraphQL API**：GraphQL 可以在一次请求里聚合多月数据，但需要重写数据层
+
+**涉及文件：**
+- `src/api/github.ts`（`getMonthlyIssuePrCounts`，第 166-208 行）
+- `src/hooks/useIssues.ts`
