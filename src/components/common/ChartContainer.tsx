@@ -1,4 +1,5 @@
 import { LoadingSkeleton } from './LoadingSkeleton';
+import type { LoadingSkeletonVariant } from './LoadingSkeleton';
 import { ErrorState } from './ErrorState';
 import { EmptyState } from './EmptyState';
 
@@ -8,11 +9,12 @@ interface ChartContainerProps {
   isEmpty?: boolean;
   emptyMessage?: string;
   height?: string;
+  skeletonVariant?: LoadingSkeletonVariant;
   children: React.ReactNode;
 }
 
-export function ChartContainer({ loading, error, isEmpty, emptyMessage, height = 'h-80', children }: ChartContainerProps) {
-  if (loading) return <LoadingSkeleton className={height} />;
+export function ChartContainer({ loading, error, isEmpty, emptyMessage, height = 'h-80', skeletonVariant = 'chart', children }: ChartContainerProps) {
+  if (loading) return <LoadingSkeleton className={height} variant={skeletonVariant} />;
   if (error) return <ErrorState message={error.message} />;
   if (isEmpty) return <EmptyState message={emptyMessage || 'No data available'} />;
   return <div className={height}>{children}</div>;

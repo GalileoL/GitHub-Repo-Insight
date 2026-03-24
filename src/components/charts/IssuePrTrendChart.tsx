@@ -87,7 +87,7 @@ export default function IssuePrTrendChart({ data, loading, error }: IssuePrTrend
   const chartRef = useECharts(option);
 
   return (
-    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No issue data">
+    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No issue data" skeletonVariant="line-chart">
       <div ref={chartRef} className="h-full w-full" />
     </ChartContainer>
   );

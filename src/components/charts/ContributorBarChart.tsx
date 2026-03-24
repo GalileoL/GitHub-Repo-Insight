@@ -66,7 +66,7 @@ export default function ContributorBarChart({ data, loading, error }: Contributo
   const chartRef = useECharts(option);
 
   return (
-    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No contributor data">
+    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No contributor data" skeletonVariant="bar-chart">
       <div ref={chartRef} className="h-full w-full" />
     </ChartContainer>
   );

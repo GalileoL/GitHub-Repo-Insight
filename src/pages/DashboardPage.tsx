@@ -20,6 +20,7 @@ import { useRepo, useLanguages, useContributors, useCommitActivity, useReleases,
 import { GitHubApiError } from '../api/github';
 import { RepoOverview } from '../components/repo/RepoOverview';
 import { SectionCard, LoadingSkeleton, ErrorState } from '../components/common';
+import type { LoadingSkeletonVariant } from '../components/common/LoadingSkeleton';
 
 const LanguagePieChart = lazy(() => import('../components/charts/LanguagePieChart'));
 const ContributorBarChart = lazy(() => import('../components/charts/ContributorBarChart'));
@@ -28,8 +29,8 @@ const IssuePrTrendChart = lazy(() => import('../components/charts/IssuePrTrendCh
 const ReleaseTimeline = lazy(() => import('../components/charts/ReleaseTimeline'));
 const CommitHeatmap = lazy(() => import('../components/charts/CommitHeatmap'));
 
-function ChartSkeleton() {
-  return <LoadingSkeleton className="h-80" />;
+function ChartSkeleton({ variant = 'chart', className = 'h-80' }: { variant?: LoadingSkeletonVariant; className?: string }) {
+  return <LoadingSkeleton className={className} variant={variant} />;
 }
 
 const STORAGE_KEY = 'dashboard-card-order';
@@ -124,7 +125,7 @@ export default function DashboardPage() {
   const cardMap = useMemo(() => ({
     languages: (
       <SectionCard title="Language Distribution" description="Breakdown by bytes of code">
-        <Suspense fallback={<ChartSkeleton />}>
+        <Suspense fallback={<ChartSkeleton variant="pie" />}>
           <LanguagePieChart
             data={languagesQuery.data}
             loading={languagesQuery.isLoading}
@@ -135,7 +136,7 @@ export default function DashboardPage() {
     ),
     contributors: (
       <SectionCard title="Top Contributors" description="By number of commits">
-        <Suspense fallback={<ChartSkeleton />}>
+        <Suspense fallback={<ChartSkeleton variant="bar-chart" />}>
           <ContributorBarChart
             data={contributorsQuery.data}
             loading={contributorsQuery.isLoading}
@@ -146,7 +147,7 @@ export default function DashboardPage() {
     ),
     commits: (
       <SectionCard title="Commit Activity" description="Weekly commit trend over the past year">
-        <Suspense fallback={<ChartSkeleton />}>
+        <Suspense fallback={<ChartSkeleton variant="line-chart" />}>
           <CommitTrendChart
             data={commitActivityQuery.data?.trend}
             loading={commitActivityQuery.isLoading}
@@ -157,7 +158,7 @@ export default function DashboardPage() {
     ),
     issues: (
       <SectionCard title="Issues & Pull Requests" description="Monthly creation trend">
-        <Suspense fallback={<ChartSkeleton />}>
+        <Suspense fallback={<ChartSkeleton variant="line-chart" />}>
           <IssuePrTrendChart
             data={issuesQuery.data}
             loading={issuesQuery.isLoading}
@@ -168,7 +169,7 @@ export default function DashboardPage() {
     ),
     releases: (
       <SectionCard title="Releases" description="Recent release history">
-        <Suspense fallback={<ChartSkeleton />}>
+        <Suspense fallback={<ChartSkeleton variant="list" />}>
           <ReleaseTimeline
             data={releasesQuery.data?.pages.flat()}
             loading={releasesQuery.isLoading}
@@ -182,7 +183,7 @@ export default function DashboardPage() {
     ),
     heatmap: (
       <SectionCard title="Commit Heatmap" description="Daily commit activity">
-        <Suspense fallback={<ChartSkeleton />}>
+        <Suspense fallback={<ChartSkeleton variant="heatmap" className="h-auto" />}>
           <CommitHeatmap
             data={commitActivityQuery.data?.heatmap}
             loading={commitActivityQuery.isLoading}

@@ -74,7 +74,7 @@ export default function ReleaseTimeline({
   }, [handleScroll]);
 
   return (
-    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No releases found" height="h-auto">
+    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No releases found" height="h-auto" skeletonVariant="list">
       <div ref={parentRef} className="relative max-h-96 overflow-y-auto pr-2">
         <div className="absolute left-[19px] top-0 bottom-0 w-px bg-border-default" />
         <div

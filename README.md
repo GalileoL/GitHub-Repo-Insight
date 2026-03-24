@@ -10,7 +10,10 @@ Built as a frontend engineering showcase using modern React patterns.
 
 ## Screenshots
 
-> *Screenshots coming soon — run `npm run dev` and explore any repository to see the dashboard in action.*
+Below are sample screenshots of the main dashboard and the Ask Repo AI view:
+
+![Dashboard view](/image/image.png)
+![AI_analyze_page](/image/image-1.png)
 
 ## Features
 

@@ -64,7 +64,7 @@ export default function CommitTrendChart({ data, loading, error }: CommitTrendCh
   const chartRef = useECharts(option);
 
   return (
-    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No commit data">
+    <ChartContainer loading={loading} error={error} isEmpty={data?.length === 0} emptyMessage="No commit data" skeletonVariant="line-chart">
       <div ref={chartRef} className="h-full w-full" />
     </ChartContainer>
   );

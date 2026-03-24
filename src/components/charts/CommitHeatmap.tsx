@@ -83,7 +83,7 @@ export default function CommitHeatmap({ data, loading, error }: CommitHeatmapPro
   const legendColors = [colors.empty, colors.l1, colors.l2, colors.l3, colors.l4];
 
   return (
-    <ChartContainer loading={loading} error={error} isEmpty={!data || data.length === 0} emptyMessage="No commit data" height="h-auto">
+    <ChartContainer loading={loading} error={error} isEmpty={!data || data.length === 0} emptyMessage="No commit data" height="h-auto" skeletonVariant="heatmap">
       <div className="overflow-x-auto pb-2 flex flex-col items-center">
         <svg
           width={weeks * (CELL_SIZE + CELL_GAP) + 40}
