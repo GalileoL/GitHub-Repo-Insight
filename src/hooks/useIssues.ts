@@ -13,13 +13,30 @@ function readCache(owner: string, repo: string): IssuePrTrendData[] | null {
   try {
     const raw = localStorage.getItem(cacheKey(owner, repo));
     if (!raw) return null;
-    const { data, ts } = JSON.parse(raw) as { data: IssuePrTrendData[]; ts: number };
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      localStorage.removeItem(cacheKey(owner, repo));
+      return null;
+    }
+
+    const { data, ts } = parsed as { data: unknown; ts: unknown };
+    const isValidTimestamp = typeof ts === 'number' && Number.isFinite(ts);
+    const isValidDataArray = Array.isArray(data);
+
+    if (!isValidTimestamp || !isValidDataArray) {
+      localStorage.removeItem(cacheKey(owner, repo));
+      return null;
+    }
+
     if (Date.now() - ts > CACHE_TTL_MS) {
       localStorage.removeItem(cacheKey(owner, repo));
       return null;
     }
-    return data;
+
+    return data as IssuePrTrendData[];
   } catch {
+    localStorage.removeItem(cacheKey(owner, repo));
     return null;
   }
 }
