@@ -66,20 +66,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ answer: result.answer, sources: [] });
     }
 
+    // ── Hybrid: compute exact analytics facts to prepend to RAG context ──
+    let analyticsPrefix = '';
+    if (intentResult.intent === 'hybrid_analytics_qa' && intentResult.analyticsQuery) {
+      try {
+        const analyticsResult = await executeAnalyticsQuery(repo, intentResult.analyticsQuery, token);
+        analyticsPrefix = `[Exact data from GitHub API] ${analyticsResult.answer}\n\n`;
+      } catch (analyticsErr) {
+        console.log(JSON.stringify({
+          type: 'analytics_hybrid_fallback',
+          repo,
+          error: analyticsErr instanceof Error ? analyticsErr.message : 'Unknown error',
+        }));
+        // Continue with RAG-only — analytics prefix stays empty
+      }
+    }
+
     // Fast-fail for repos that have not been indexed yet.
     const chunkCount = await countRepoChunks(repo);
     if (chunkCount === 0) {
+      // If hybrid mode already fetched analytics data, return that instead of "not indexed"
+      if (analyticsPrefix) {
+        return res.status(200).json({ answer: analyticsPrefix.trim(), sources: [] });
+      }
       return res.status(200).json({
         answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
         sources: [],
       });
-    }
-
-    // ── Hybrid: compute exact analytics facts to prepend to RAG context ──
-    let analyticsPrefix = '';
-    if (intentResult.intent === 'hybrid_analytics_qa' && intentResult.analyticsQuery) {
-      const analyticsResult = await executeAnalyticsQuery(repo, intentResult.analyticsQuery, token);
-      analyticsPrefix = `[Exact data from GitHub API] ${analyticsResult.answer}\n\n`;
     }
 
     // 1. Classify the query to determine type filter

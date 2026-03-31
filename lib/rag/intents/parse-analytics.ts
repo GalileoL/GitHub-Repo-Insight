@@ -49,7 +49,9 @@ function lastDayOfMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
 }
 
-function monthToRange(year: number, sinceMonth: number, untilMonth: number): DateRange {
+function monthToRange(year: number, sinceMonth: number, untilMonth: number): DateRange | null {
+  if (sinceMonth < 1 || sinceMonth > 12 || untilMonth < 1 || untilMonth > 12) return null;
+  if (year < 2000 || year > 2100) return null;
   const lastDay = lastDayOfMonth(year, untilMonth);
   return {
     since: `${year}-${String(sinceMonth).padStart(2, '0')}-01T00:00:00Z`,

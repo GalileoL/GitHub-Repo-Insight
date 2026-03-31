@@ -1,22 +1,7 @@
 import type { AnalyticsQuery, AnalyticsResult, DateRange, AnalyticsEntity } from './types.js';
+import { ghFetch } from '../github/client.js';
 
-const GITHUB_API = 'https://api.github.com';
 const MAX_PAGES = 30; // 3000 items max to stay within reasonable API usage
-
-// ═══ GitHub API Helpers ══════════════════════════════════════
-
-async function ghFetch<T>(path: string, token?: string): Promise<T> {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${GITHUB_API}${path}`, { headers });
-  if (!res.ok) {
-    throw new Error(`GitHub API error ${res.status}: ${path}`);
-  }
-  return res.json() as Promise<T>;
-}
 
 // ═══ Paginated Fetchers ══════════════════════════════════════
 
@@ -148,16 +133,20 @@ async function fetchCommits(
 
 // ═══ Top Authors Aggregation ═════════════════════════════════
 
+function getAuthorFromPROrIssue(item: GitHubPRItem | GitHubIssueItem): string {
+  return item.user?.login ?? 'unknown';
+}
+
+function getAuthorFromCommit(item: GitHubCommitItem): string {
+  return item.commit?.author?.name ?? 'unknown';
+}
+
 function computeTopAuthors(
-  items: Array<{ user?: { login: string } | null; commit?: { author: { name: string } | null } }>,
+  authors: string[],
   limit: number = 10,
 ): Array<{ author: string; count: number }> {
   const counts = new Map<string, number>();
-  for (const item of items) {
-    const author =
-      (item.user as { login: string } | null | undefined)?.login
-      ?? (item.commit as { author: { name: string } | null } | undefined)?.author?.name
-      ?? 'unknown';
+  for (const author of authors) {
     counts.set(author, (counts.get(author) ?? 0) + 1);
   }
   return Array.from(counts.entries())
@@ -231,26 +220,30 @@ export async function executeAnalyticsQuery(
 ): Promise<AnalyticsResult> {
   const t0 = Date.now();
 
-  let items: Array<{ user?: { login: string } | null }>;
+  let count: number;
   let truncated: boolean;
+  let authors: string[] = [];
 
   switch (query.entity) {
     case 'pr': {
       const result = await fetchPRs(repo, query, token);
-      items = result.items;
+      count = result.items.length;
       truncated = result.truncated;
+      if (query.op === 'top_authors') authors = result.items.map(getAuthorFromPROrIssue);
       break;
     }
     case 'issue': {
       const result = await fetchIssues(repo, query, token);
-      items = result.items;
+      count = result.items.length;
       truncated = result.truncated;
+      if (query.op === 'top_authors') authors = result.items.map(getAuthorFromPROrIssue);
       break;
     }
     case 'commit': {
       const result = await fetchCommits(repo, query, token);
-      items = result.items;
+      count = result.items.length;
       truncated = result.truncated;
+      if (query.op === 'top_authors') authors = result.items.map(getAuthorFromCommit);
       break;
     }
   }
@@ -265,21 +258,21 @@ export async function executeAnalyticsQuery(
     entity: query.entity,
     state: query.state,
     hasDateRange: query.dateRange !== null,
-    count: items.length,
+    count,
     truncated,
     durationMs,
   }));
 
   if (query.op === 'top_authors') {
-    const topAuthors = computeTopAuthors(items as Array<{ user?: { login: string } | null; commit?: { author: { name: string } | null } }>);
+    const topAuthors = computeTopAuthors(authors);
     return {
-      answer: formatTopAuthorsAnswer(topAuthors, items.length, query, truncated),
+      answer: formatTopAuthorsAnswer(topAuthors, count, query, truncated),
       data: {
         op: query.op,
         entity: query.entity,
         dateRange: query.dateRange,
         state: query.state,
-        count: items.length,
+        count,
         truncated,
         topAuthors,
       },
@@ -287,13 +280,13 @@ export async function executeAnalyticsQuery(
   }
 
   return {
-    answer: formatCountAnswer(items.length, query, truncated),
+    answer: formatCountAnswer(count, query, truncated),
     data: {
       op: query.op,
       entity: query.entity,
       dateRange: query.dateRange,
       state: query.state,
-      count: items.length,
+      count,
       truncated,
     },
   };

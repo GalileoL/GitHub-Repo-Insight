@@ -136,4 +136,18 @@ describe('parseAnalyticsQuery', () => {
     const r = parseAnalyticsQuery('how many PRs?');
     expect(r?.op).toBe('count');
   });
+
+  // ── Edge cases: invalid month values ──
+
+  it('returns null dateRange for invalid months (13月)', () => {
+    const r = parseAnalyticsQuery('13月到15月的PR');
+    expect(r?.entity).toBe('pr');
+    expect(r?.dateRange).toBeNull();
+  });
+
+  it('returns null dateRange for month 0', () => {
+    const r = parseAnalyticsQuery('2024年0月的issue');
+    expect(r?.entity).toBe('issue');
+    expect(r?.dateRange).toBeNull();
+  });
 });
