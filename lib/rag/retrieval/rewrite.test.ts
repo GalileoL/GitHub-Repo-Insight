@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeQuery } from './rewrite.js';
+import { analyzeQuery, computeConfidence, makeRewriteDecision, DEFAULT_THRESHOLDS } from './rewrite.js';
+import type { ScoredChunk, Chunk } from '../types.js';
 
 describe('analyzeQuery', () => {
   describe('anchor extraction', () => {
@@ -129,5 +130,138 @@ describe('analyzeQuery', () => {
         expect(result.riskScore).toBeLessThanOrEqual(1);
       }
     });
+  });
+});
+
+function makeChunk(id: string, score: number, opts?: Partial<Chunk['metadata']>): ScoredChunk {
+  return {
+    chunk: {
+      id,
+      content: 'Test content that is long enough to be meaningful for testing purposes.',
+      metadata: {
+        repo: 'owner/repo',
+        type: 'issue',
+        title: `Test chunk ${id}`,
+        githubUrl: `https://github.com/owner/repo/issues/${id}`,
+        ...opts,
+      },
+    },
+    score,
+  };
+}
+
+describe('computeConfidence', () => {
+  it('returns high confidence for strong results', () => {
+    const results = [
+      makeChunk('1', 0.95),
+      makeChunk('2', 0.6),
+      makeChunk('3', 0.5),
+    ];
+    const confidence = computeConfidence(results, 'rerank_boosted');
+    expect(confidence.confidenceScore).toBeGreaterThan(0.5);
+    expect(confidence.scoreSource).toBe('rerank_boosted');
+  });
+
+  it('returns low confidence for weak results', () => {
+    const results = [
+      makeChunk('1', 0.15),
+      makeChunk('2', 0.14),
+      makeChunk('3', 0.12),
+    ];
+    const confidence = computeConfidence(results, 'rerank_boosted');
+    expect(confidence.confidenceScore).toBeLessThan(0.3);
+  });
+
+  it('returns zero confidence for empty results', () => {
+    const confidence = computeConfidence([], 'rerank_boosted');
+    expect(confidence.confidenceScore).toBe(0);
+    expect(confidence.topScore).toBe(0);
+    expect(confidence.scoreGap).toBe(0);
+    expect(confidence.coverageRatio).toBe(0);
+    expect(confidence.avgScore).toBe(0);
+  });
+
+  it('returns zero confidence for single result', () => {
+    const confidence = computeConfidence([makeChunk('1', 0.5)], 'rerank_boosted');
+    expect(confidence.scoreGap).toBe(0);
+    expect(confidence.topScore).toBe(0.5);
+  });
+});
+
+describe('makeRewriteDecision', () => {
+  it('returns none for clear query with high confidence', () => {
+    const analysis = analyzeQuery('What does src/utils/auth.ts do?', 'documentation');
+    const confidence = computeConfidence(
+      [makeChunk('1', 0.9), makeChunk('2', 0.5), makeChunk('3', 0.4)],
+      'rerank_boosted',
+    );
+    const decision = makeRewriteDecision(analysis, confidence);
+    expect(decision.mode).toBe('none');
+    expect(decision.reasonCodes).toContain('high_confidence');
+  });
+
+  it('returns light for mildly vague query', () => {
+    const analysis = analyzeQuery('How does auth work?', 'general');
+    const confidence = computeConfidence(
+      [makeChunk('1', 0.4), makeChunk('2', 0.35), makeChunk('3', 0.3)],
+      'rerank_boosted',
+    );
+    const decision = makeRewriteDecision(analysis, confidence);
+    expect(['light', 'strong']).toContain(decision.mode);
+    expect(decision.rewriteScore).toBeGreaterThanOrEqual(DEFAULT_THRESHOLDS.light);
+  });
+
+  it('returns strong for vague query with poor retrieval', () => {
+    const analysis = analyzeQuery('explain the architecture', 'general');
+    const confidence = computeConfidence(
+      [makeChunk('1', 0.2), makeChunk('2', 0.18), makeChunk('3', 0.15)],
+      'rerank_boosted',
+    );
+    const decision = makeRewriteDecision(analysis, confidence);
+    expect(['strong', 'strong-llm']).toContain(decision.mode);
+    expect(decision.rewriteScore).toBeGreaterThanOrEqual(DEFAULT_THRESHOLDS.strong);
+  });
+
+  it('caps at strong when anchors are present even with high rewrite score', () => {
+    const analysis = analyzeQuery('explain src/utils/auth.ts and its relationship to everything', 'general');
+    const confidence = computeConfidence(
+      [makeChunk('1', 0.1), makeChunk('2', 0.09)],
+      'rerank_boosted',
+    );
+    const decision = makeRewriteDecision(analysis, confidence);
+    expect(decision.mode).not.toBe('strong-llm');
+    if (decision.reasonCodes.includes('anchors_present')) {
+      expect(decision.mode).toBe('strong');
+    }
+  });
+
+  it('includes reason codes that explain the decision', () => {
+    const analysis = analyzeQuery('explain this', 'general');
+    const confidence = computeConfidence(
+      [makeChunk('1', 0.15), makeChunk('2', 0.14)],
+      'rerank_boosted',
+    );
+    const decision = makeRewriteDecision(analysis, confidence);
+    expect(decision.reasonCodes.length).toBeGreaterThan(0);
+    expect(decision.reason).toBeTruthy();
+  });
+
+  it('rewrite score stays in 0-1 range', () => {
+    const analysis = analyzeQuery('x', 'general');
+    const confidence = computeConfidence([], 'rerank_boosted');
+    const decision = makeRewriteDecision(analysis, confidence);
+    expect(decision.rewriteScore).toBeGreaterThanOrEqual(0);
+    expect(decision.rewriteScore).toBeLessThanOrEqual(1);
+  });
+
+  it('accepts custom thresholds', () => {
+    const analysis = analyzeQuery('explain this', 'general');
+    const confidence = computeConfidence(
+      [makeChunk('1', 0.3), makeChunk('2', 0.25)],
+      'rerank_boosted',
+    );
+    const decision = makeRewriteDecision(analysis, confidence, { light: 0.9, strong: 0.95, llm: 0.99 });
+    expect(decision.mode).toBe('none');
+    expect(decision.thresholds.light).toBe(0.9);
   });
 });
