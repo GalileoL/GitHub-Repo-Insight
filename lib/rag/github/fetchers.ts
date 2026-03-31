@@ -1,19 +1,5 @@
 import type { RawRepoData, RawIssue, RawPull, RawRelease, RawCommit } from '../types.js';
-
-const GITHUB_API = 'https://api.github.com';
-
-async function ghFetch<T>(path: string, token?: string): Promise<T> {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const res = await fetch(`${GITHUB_API}${path}`, { headers });
-  if (!res.ok) {
-    throw new Error(`GitHub API error ${res.status}: ${path}`);
-  }
-  return res.json() as Promise<T>;
-}
+import { ghFetch, GITHUB_API } from './client.js';
 
 async function fetchReadme(repo: string, token?: string): Promise<string | null> {
   try {
