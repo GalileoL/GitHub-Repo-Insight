@@ -9,6 +9,10 @@ import {
   categorizeError,
   logStreamMetrics,
 } from '../../lib/rag/metrics/index.js';
+import { analyzeAndRewrite, computeConfidence } from '../../lib/rag/retrieval/rewrite.js';
+import { mergeResults, toScoredChunks, buildDiagnosticSnapshots } from '../../lib/rag/retrieval/merge.js';
+import { rerank } from '../../lib/rag/retrieval/rerank.js';
+import type { RetrievalDiagnostics, ScoredChunk } from '../../lib/rag/types.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -63,17 +67,96 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 1. Classify the query to determine type filter
-    const { typeFilter } = classifyQuery(question);
+    const { typeFilter, category } = classifyQuery(question);
 
-    // 2. Hybrid retrieval
-    const chunks = await hybridSearch(question, repo, 8, typeFilter);
+    // 2. First-pass retrieval
+    const t0 = Date.now();
+    const firstPass = await hybridSearch(question, repo, 8, typeFilter);
+    const firstPassMs = Date.now() - t0;
 
-    if (chunks.length === 0) {
+    if (firstPass.length === 0) {
       return res.status(200).json({
         answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
         sources: [],
       });
     }
+
+    // 3. Analyze query + decide on rewrite
+    const t1 = Date.now();
+    const rewriteResult = await analyzeAndRewrite(question, category, firstPass, 'rerank_boosted');
+    const rewriteDecisionMs = Date.now() - t1;
+    const firstPassConfidence = computeConfidence(firstPass, 'rerank_boosted');
+
+    // 4. Execute rewrite searches if needed, merge, rerank
+    let chunks: ScoredChunk[];
+    let rewriteSearchMs = 0;
+
+    if (rewriteResult.decision.mode === 'none') {
+      chunks = firstPass;
+    } else {
+      const t2 = Date.now();
+      const rewritePasses = await Promise.all(
+        rewriteResult.candidates.map((c) => hybridSearch(c.query, repo, 8, typeFilter)),
+      );
+      rewriteSearchMs = Date.now() - t2;
+
+      const merged = mergeResults(firstPass, rewritePasses, rewriteResult.candidates);
+      const scoredForRerank = toScoredChunks(merged);
+      chunks = rerank(scoredForRerank, question, 8);
+    }
+
+    // 5. Structured rewrite diagnostics
+    const { before: beforeRewrite, after: afterRewrite } =
+      rewriteResult.decision.mode !== 'none'
+        ? buildDiagnosticSnapshots(firstPass, chunks, 8)
+        : { before: { topScore: firstPass[0]?.score ?? 0, avgScore: 0, chunkIds: firstPass.map((c) => c.chunk.id), coverageRatio: 0 }, after: null };
+
+    const diagnostics: RetrievalDiagnostics = {
+      requestId: '', // set below if streaming
+      originalQuery: question,
+      repo,
+      analysis: rewriteResult.analysis,
+      firstPassConfidence,
+      decision: rewriteResult.decision,
+      candidates: rewriteResult.candidates,
+      beforeRewrite,
+      afterRewrite,
+      timing: {
+        totalRetrievalMs: firstPassMs + rewriteDecisionMs + rewriteSearchMs,
+        firstPassMs,
+        rewriteDecisionMs,
+        rewriteSearchMs,
+        llmRewriteMs: rewriteResult.decision.mode === 'strong-llm' ? rewriteDecisionMs : null,
+        mergeMs: 0,
+        rerankMs: 0,
+      },
+      counts: {
+        firstPassChunks: firstPass.length,
+        mergedChunks: 0,
+        deduplicatedChunks: 0,
+        finalChunks: chunks.length,
+      },
+    };
+
+    // Log rewrite diagnostics as structured JSON
+    console.log(JSON.stringify({
+      type: 'rewrite_diagnostics',
+      requestId: diagnostics.requestId,
+      repo,
+      mode: diagnostics.decision.mode,
+      reasonCodes: diagnostics.decision.reasonCodes,
+      rewriteScore: diagnostics.decision.rewriteScore,
+      riskScore: diagnostics.analysis.riskScore,
+      confidenceScore: firstPassConfidence.confidenceScore,
+      anchorTypes: Object.entries(diagnostics.analysis.anchors)
+        .filter(([, v]) => (v as string[]).length > 0)
+        .map(([k]) => k),
+      candidateCount: diagnostics.candidates.length,
+      overlap: diagnostics.afterRewrite?.overlapRatio ?? null,
+      newChunks: diagnostics.afterRewrite?.newChunkIds.length ?? 0,
+      timing: diagnostics.timing,
+      counts: diagnostics.counts,
+    }));
 
     const wantStream = req.body?.stream === true;
 
@@ -82,6 +165,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const metrics = new ServerMetricsRecorder();
       const requestId = metrics.getRequestId();
       metrics.setChunkCount(chunks.length);
+      diagnostics.requestId = requestId;
 
       // Persist stream session for resume
       await setStreamSession({
