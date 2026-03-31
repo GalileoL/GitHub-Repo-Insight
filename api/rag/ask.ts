@@ -90,6 +90,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 4. Execute rewrite searches if needed, merge, rerank
     let chunks: ScoredChunk[];
     let rewriteSearchMs = 0;
+    let mergedChunkCount = 0;
+    let deduplicatedCount = 0;
 
     if (rewriteResult.decision.mode === 'none') {
       chunks = firstPass;
@@ -100,7 +102,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
       rewriteSearchMs = Date.now() - t2;
 
+      const totalInputChunks = firstPass.length + rewritePasses.reduce((n, p) => n + p.length, 0);
       const merged = mergeResults(firstPass, rewritePasses, rewriteResult.candidates);
+      mergedChunkCount = merged.length;
+      deduplicatedCount = totalInputChunks - mergedChunkCount;
       const scoredForRerank = toScoredChunks(merged);
       chunks = rerank(scoredForRerank, question, 8);
     }
@@ -132,8 +137,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       counts: {
         firstPassChunks: firstPass.length,
-        mergedChunks: 0,
-        deduplicatedChunks: 0,
+        mergedChunks: mergedChunkCount,
+        deduplicatedChunks: deduplicatedCount,
         finalChunks: chunks.length,
       },
     };

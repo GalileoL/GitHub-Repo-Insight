@@ -467,5 +467,11 @@ export async function analyzeAndRewrite(
   const confidence = computeConfidence(firstPassResults, scoreSource);
   const decision = makeRewriteDecision(analysis, confidence, thresholds);
   const candidates = await generateCandidates(decision, analysis);
+
+  // Annotate LLM fallback for diagnostics (spec: 'llm_fallback_to_strong' note)
+  if (decision.mode === 'strong-llm' && candidates.length > 0 && candidates.every((c) => c.strategy !== 'llm')) {
+    decision.reason += ' [llm_fallback_to_strong]';
+  }
+
   return { decision, candidates, analysis };
 }
