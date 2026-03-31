@@ -13,6 +13,7 @@ import { analyzeAndRewrite, computeConfidence } from '../../lib/rag/retrieval/re
 import { mergeResults, toScoredChunks, buildDiagnosticSnapshots } from '../../lib/rag/retrieval/merge.js';
 import { rerank } from '../../lib/rag/retrieval/rerank.js';
 import type { RetrievalDiagnostics, ScoredChunk } from '../../lib/rag/types.js';
+import { classifyIntent, executeAnalyticsQuery } from '../../lib/rag/intents/index.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -57,6 +58,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(429).json({ error: rateLimit.error });
     }
 
+    // ── Intent-based routing: analytics queries bypass RAG entirely ──
+    const intentResult = classifyIntent(question);
+
+    if (intentResult.intent === 'repo_analytics' && intentResult.analyticsQuery) {
+      const result = await executeAnalyticsQuery(repo, intentResult.analyticsQuery, token);
+      return res.status(200).json({ answer: result.answer, sources: [] });
+    }
+
     // Fast-fail for repos that have not been indexed yet.
     const chunkCount = await countRepoChunks(repo);
     if (chunkCount === 0) {
@@ -64,6 +73,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
         sources: [],
       });
+    }
+
+    // ── Hybrid: compute exact analytics facts to prepend to RAG context ──
+    let analyticsPrefix = '';
+    if (intentResult.intent === 'hybrid_analytics_qa' && intentResult.analyticsQuery) {
+      const analyticsResult = await executeAnalyticsQuery(repo, intentResult.analyticsQuery, token);
+      analyticsPrefix = `[Exact data from GitHub API] ${analyticsResult.answer}\n\n`;
     }
 
     // 1. Classify the query to determine type filter
@@ -214,7 +230,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let seq = 0;
       try {
         const sources = buildSources(chunks);
-        const generator = generateAnswerStream(question, repo, chunks);
+        const generator = generateAnswerStream(question, repo, chunks, analyticsPrefix || undefined);
 
         // --- Heartbeat: send ping every 20s to prevent proxy timeout ---
         const startHeartbeat = () => {
@@ -308,7 +324,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } else {
       // --- Non-streaming (backwards compatible) ---
-      const result = await generateAnswer(question, repo, chunks);
+      const result = await generateAnswer(question, repo, chunks, analyticsPrefix || undefined);
       return res.status(200).json(result);
     }
   } catch (err) {

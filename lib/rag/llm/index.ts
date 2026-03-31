@@ -93,13 +93,14 @@ Rules:
 - When referencing a source, use the format [Source N] to cite it.
 - Today's date is {{TODAY}}.`;
 
-function buildMessages(question: string, repo: string, chunks: ScoredChunk[]) {
+function buildMessages(question: string, repo: string, chunks: ScoredChunk[], contextPrefix?: string) {
   const context = buildContext(chunks);
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = SYSTEM_PROMPT.replace('{{TODAY}}', today);
+  const fullContext = contextPrefix ? `${contextPrefix}${context}` : context;
   return [
     { role: 'system' as const, content: systemPrompt },
-    { role: 'user' as const, content: `Repository: ${repo}\n\nContext:\n${context}\n\nQuestion: ${question}` },
+    { role: 'user' as const, content: `Repository: ${repo}\n\nContext:\n${fullContext}\n\nQuestion: ${question}` },
   ];
 }
 
@@ -107,11 +108,12 @@ export async function generateAnswer(
   question: string,
   repo: string,
   chunks: ScoredChunk[],
+  contextPrefix?: string,
 ): Promise<AskResponse> {
   const sources = buildSources(chunks);
   const provider = getProvider();
   const model = LLM_CONFIG[provider].model;
-  const messages = buildMessages(question, repo, chunks);
+  const messages = buildMessages(question, repo, chunks, contextPrefix);
 
   const response = await getClient().chat.completions.create({
     model,
@@ -130,10 +132,11 @@ export async function* generateAnswerStream(
   question: string,
   repo: string,
   chunks: ScoredChunk[],
+  contextPrefix?: string,
 ): AsyncGenerator<string> {
   const provider = getProvider();
   const model = LLM_CONFIG[provider].model;
-  const messages = buildMessages(question, repo, chunks);
+  const messages = buildMessages(question, repo, chunks, contextPrefix);
 
   const stream = await getClient().chat.completions.create({
     model,
