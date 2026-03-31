@@ -429,11 +429,28 @@ export async function generateCandidates(
         const { rewriteQueries } = await import('../llm/index.js');
         const llmQueries = await rewriteQueries(original, anchors, 3);
         if (llmQueries.length > 0) {
-          return llmQueries.map((q) => ({
-            query: ensureAnchorsInQuery(q, anchors),
-            strategy: 'llm' as const,
-            preservedAnchors: anchors,
-          }));
+          const normalizedOriginal = original.trim().toLowerCase();
+          const seen = new Set<string>();
+          const candidates: RewriteCandidate[] = [];
+          for (const q of llmQueries) {
+            const normalized = q.trim().toLowerCase();
+            // Skip empty, duplicate, or original-equivalent queries
+            if (!normalized || normalized === normalizedOriginal || seen.has(normalized)) {
+              continue;
+            }
+            seen.add(normalized);
+            candidates.push({
+              query: ensureAnchorsInQuery(q, anchors),
+              strategy: 'llm' as const,
+              preservedAnchors: anchors,
+            });
+            if (candidates.length >= 3) {
+              break;
+            }
+          }
+          if (candidates.length > 0) {
+            return candidates;
+          }
         }
       } catch {
         // LLM failed — fall back to deterministic strong
