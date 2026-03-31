@@ -32,6 +32,7 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 - **Multi-LLM Support** — Switch between OpenAI, DeepSeek, Groq, Gemini, and Claude via a single env var
 - **On-Demand Indexing** — One-click ingestion of README, issues, PRs, releases, and commits into a vector database
 - **Hybrid Retrieval** — Combines vector similarity + keyword search with query routing and reranking
+- **Conditional Query Rewrite** — Automatically analyzes query risk and retrieval confidence to trigger synonym expansion, query decomposition, or LLM-based reformulation for improved retrieval on vague/complex questions
 - **Cited Answers** — AI answers include clickable source citations linking back to GitHub
 - **Q&A History** — Locally cached question history with instant recall (no re-query)
 - **Recent Search** — Locally stored search history for quick re-access
@@ -148,7 +149,7 @@ src/
 api/
 ├── auth/           # Vercel Serverless Function for OAuth token exchange
 └── rag/            # RAG serverless endpoints
-    ├── ask.ts      # POST — hybrid retrieval + LLM answer generation
+    ├── ask.ts      # POST — hybrid retrieval + conditional query rewrite + LLM answer generation
     ├── ingest.ts   # POST — fetch GitHub data, chunk, embed, store
     └── status.ts   # GET  — check if a repo is indexed
 lib/
@@ -158,14 +159,14 @@ lib/
     ├── github/     # GitHub data fetchers for ingestion
     ├── auth/       # GitHub token verification & rate limiting
     ├── llm/        # Multi-provider LLM generation (OpenAI / DeepSeek / Groq / Gemini / Claude)
-    ├── retrieval/  # Vector search, keyword search, hybrid merge, rerank, query router
+    ├── retrieval/  # Vector search, keyword search, hybrid merge, rerank, query router, conditional query rewrite, result merge
     ├── storage/    # Upstash Vector upsert / query / delete
     └── types.ts    # Shared RAG type definitions
 ```
 
 **Dashboard data flow:** GitHub API → `githubFetch` client → transformers → TanStack Query hooks → chart components
 
-**Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → rerank → LLM → cited answer
+**Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → conditional query rewrite (analyze risk + confidence → optional multi-query fan-out) → merge + rerank → LLM → cited answer
 
 ## SSE and Markdown Implementation Notes
 

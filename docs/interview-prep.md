@@ -15,7 +15,7 @@
 **核心亮点（选 5-7 条）：**
 
 - 基于 **RAG（检索增强生成）** 架构实现仓库智能问答，支持对 README、Issue、PR、Release、Commit 等多源数据的自然语言查询
-- 设计并实现 **混合检索管线**：向量检索（Upstash Vector） + BM25 关键词检索（MiniSearch），通过 **RRF（Reciprocal Rank Fusion）** 融合排序 + 轻量级 Rerank（时效性/内容质量/标题匹配）
+- 设计并实现 **混合检索管线**：向量检索（Upstash Vector） + BM25 关键词检索（MiniSearch），通过 **RRF（Reciprocal Rank Fusion）** 融合排序 + 轻量级 Rerank（时效性/内容质量/标题匹配）+ **条件查询改写**（根据查询风险和检索置信度自动触发同义词扩展/查询分解/LLM 改写）
 - 实现 **查询意图路由**，根据问题语义自动分类为 documentation / community / changes / general，动态过滤检索范围，提升召回精度
 - 采用 **SSE（Server-Sent Events）** 实现 LLM 流式输出，前端逐 token 渲染 + 打字光标动画，优化用户等待体验
 - 支持 **5 种大模型热切换**（OpenAI / DeepSeek / Groq / Gemini / Claude），统一通过 OpenAI SDK 兼容接口调用，仅需修改环境变量即可切换
@@ -63,7 +63,7 @@ A: 分三层：
 2. **Serverless API 层**：3 个 RAG 端点（ingest/ask/status）+ 1 个 OAuth 端点，Vercel Functions 运行
 3. **外部服务**：GitHub REST API（数据源）、OpenAI API（Embedding + LLM）、Upstash Vector（向量存储）、Upstash Redis（限流计数）
 
-数据流：GitHub API → Fetcher → Chunker → Embedder → Vector DB（ingest），用户提问 → Query Router → Hybrid Search → Rerank → LLM → SSE Stream（ask）
+数据流：GitHub API → Fetcher → Chunker → Embedder → Vector DB（ingest），用户提问 → Query Router → Hybrid Search → **Conditional Query Rewrite → Merge →** Rerank → LLM → SSE Stream（ask）
 
 ---
 
@@ -94,7 +94,10 @@ A: 分两个阶段：
 2. **Hybrid Search**：vector 语义检索 + MiniSearch BM25 关键词检索并行执行
 3. **RRF Merge**：用 Reciprocal Rank Fusion 融合两路排序（K=60），取 top 2×topK
 4. **Rerank**：对融合结果做轻量级重排——时效性 +0.15（30 天内）、内容长度加分、标题关键词匹配加分
-5. **LLM Generate**：将 top 8 chunks 作为 context 拼入 system prompt，流式生成回答
+5. **Conditional Query Rewrite**：分析查询风险 + 检索置信度，决定是否需要改写查询（详见 Q32）
+6. **Multi-pass Merge**：如果触发了改写，将原始结果和改写结果合并去重（max-wins + consensus bonus）
+7. **Second Rerank**：对合并后的结果集针对原始查询做二次重排
+8. **LLM Generate**：将 top 8 chunks 作为 context 拼入 system prompt，流式生成回答
 
 ---
 
@@ -399,6 +402,7 @@ A: 主要局限：
 3. **没有向量缓存**：每次提问都重新 embed query。改进：对相似问题做 query embedding 缓存
 4. **没有增量更新**：re-index 是全量重建。改进：记录 last sync timestamp，只获取新增数据
 5. **Rerank 不够精准**：规则打分不如模型打分。改进：接入 Cohere Rerank API
+6. **查询改写效果待验证**：已实现条件查询改写系统（4 种模式），但需要更多 A/B 测试数据来调优阈值参数
 
 ---
 
@@ -479,3 +483,81 @@ A:
 3. **加入单元测试**：特别是 chunking、rerank、router 这些核心逻辑
 4. **用 React Server Components**：如果用 Next.js 而不是纯 Vite，Dashboard 页面的数据可以在服务端获取，减少客户端请求
 5. **抽出 RAG SDK**：把 embedding + retrieval + rerank 抽成独立包，方便复用到其他项目
+
+---
+
+### 第九部分：条件查询改写系统（Conditional Query Rewrite）
+
+**Q32: 为什么需要查询改写？你是怎么设计的？**
+
+A: 当前 RAG 管线直接把用户问题原文传给混合检索。对于清晰具体的查询（"src/utils/auth.ts 做了什么"）效果很好，但对于模糊的、多部分的、或架构级别的问题（"explain the design"），检索质量会下降——因为用户的用词可能和索引内容不匹配。
+
+**设计原则：确定性优先，选择性 LLM 回退（deterministic-first, selective LLM fallback）。**
+
+实现方式是一个 **rewrite-as-middleware** 的管线，插在第一次检索和 LLM 生成之间：
+
+1. **分析查询（analyzeQuery）**：提取锚点（文件路径、API 端点、代码符号、目录）和风险信号（模糊、复杂、隐含上下文、比较、否定）
+2. **计算检索置信度（computeConfidence）**：评估第一次检索结果的质量——topScore、scoreGap、coverageRatio、avgScore 的加权组合
+3. **决策引擎（makeRewriteDecision）**：结合查询风险和检索置信度，计算一个 `rewriteScore = riskScore × 0.6 + (1 - confidenceScore) × 0.4`，映射到 4 种模式
+4. **生成候选查询（generateCandidates）**：根据模式生成 0-3 个改写候选
+5. **并行检索 + 合并**：对每个候选做 hybridSearch，然后去重合并
+
+**关键设计决策**：
+- 锚点折扣（anchor discount）：如果查询中包含文件路径（×0.5）或代码符号（×0.7），大幅降低风险分数，避免不必要的改写
+- `none` 模式零开销：只做同步分析，不触发任何额外检索
+- `strong-llm` 有三重保护门：rewriteScore ≥ 0.8 且 confidenceScore < 0.3 且无任何锚点，才会调用 LLM，且 LLM 失败自动降级到确定性改写
+
+---
+
+**Q33: 四种改写模式分别做什么？阈值怎么定的？**
+
+A:
+
+| 模式 | rewriteScore 区间 | 候选数 | 策略 | 额外延迟 |
+|------|-------------------|--------|------|----------|
+| `none` | [0, 0.3) | 0 | 直接用原始查询 | ~0ms |
+| `light` | [0.3, 0.55) | 1 | 同义词扩展（auth → authentication） | ~200-400ms |
+| `strong` | [0.55, 0.8) | 2-3 | 同义词 + 查询分解/概念扩展 | ~200-400ms |
+| `strong-llm` | [0.8, 1.0] | 2-3 | LLM 生成语义不同的改写 | ~700-900ms |
+
+**阈值设计思路：**
+- 0.3 的 `light` 阈值意味着只有 30% 的风险信号被触发或者检索置信度较低时，才做最轻量的同义词替换
+- `strong` 的 0.55 要求至少一个较高权重的风险信号加上不太好的检索结果
+- `strong-llm` 的 0.8 只有最极端的场景才触发：查询极其模糊 + 检索几乎无效 + 没有任何锚点
+
+**为什么不全用 LLM 改写？**
+1. 大部分查询不需要改写（`none` 模式，零开销）
+2. 确定性改写可预测、可缓存、无 API 成本
+3. LLM 改写增加 500ms+ 延迟和 API 费用
+4. LLM 不稳定（可能超时/返回无效 JSON），确定性改写永远可用
+
+---
+
+**Q34: 多路检索结果是怎么合并的？怎么避免改写结果淹没原始结果？**
+
+A: 合并策略叫 **max-wins + consensus bonus**：
+
+```
+mergedScore = max(originalScore, rewriteScore1, rewriteScore2, ...) + (sourceCount - 1) × 0.05
+```
+
+- **max-wins**：取所有查询变体中该 chunk 的最高分作为基础分，避免弱改写拉低好结果
+- **consensus bonus**：+0.05/额外来源——如果一个 chunk 同时被原始查询和改写查询检索到，说明它大概率相关，给予奖励
+- **去重**：按 chunk ID 精确去重（chunk ID 在 ingest 时确定，不需要模糊去重）
+- **原始查询优先**：如果两个 chunk 的 mergedScore 在 0.01 以内，优先选择来自原始查询的 chunk——这确保改写不会在分数接近时取代用户真正想要的结果
+- **二次重排**：合并后的结果集对原始查询（而非改写查询）做最终 rerank，确保最终排序反映用户的原始意图
+
+**为什么不用分数加权平均？** 因为不同查询变体的分数尺度不一致，弱改写的低分会拖累好结果。Max-wins 保证最好的分数不会被稀释。
+
+**结构化日志**：每次请求记录 rewrite_diagnostics JSON（mode、reasonCodes、timing、before/after overlap ratio），支持离线分析和 A/B 调优。
+
+---
+
+**Q35: 这个改写系统有什么 trade-off 和局限？**
+
+A:
+1. **确定性优先的天花板**：同义词/分解这些规则化改写，对于真正含糊的查询改进有限，质量上限不如全 LLM 方案。但确定性方案可预测、快、便宜
+2. **双重 Rerank**：hybridSearch 内部已经 rerank 了一次，合并后又 rerank 一次。绝对分数会有微小偏移（additive boosts 叠加），但相对排序稳定。保留这个设计是为了不修改 hybrid.ts
+3. **阈值需要调优**：当前阈值是根据设计直觉设定的，需要更多生产数据来验证和调整
+4. **LLM fallback 无测试覆盖**：strong-llm 路径需要 mock 动态 import，测试成本较高，目前依赖确定性 fallback 保证安全
+5. **没有查询缓存**：相同的查询不会缓存改写决策。如果需要，可以按 query hash 缓存 `RewriteResult`
