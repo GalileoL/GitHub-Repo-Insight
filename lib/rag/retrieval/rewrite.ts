@@ -271,3 +271,201 @@ export function makeRewriteDecision(
 
   return { mode, reasonCodes, reason, rewriteScore, thresholds: t };
 }
+
+// ─── Synonym / Vocabulary Maps ────────────────────────────────
+
+const SYNONYM_MAP: Record<string, string> = {
+  auth: 'authentication',
+  authn: 'authentication',
+  authz: 'authorization',
+  deps: 'dependencies',
+  dep: 'dependency',
+  config: 'configuration',
+  env: 'environment',
+  repo: 'repository',
+  db: 'database',
+  msg: 'message',
+  err: 'error',
+  req: 'request',
+  res: 'response',
+  fn: 'function',
+  func: 'function',
+  impl: 'implementation',
+  init: 'initialization',
+  param: 'parameter',
+  params: 'parameters',
+  arg: 'argument',
+  args: 'arguments',
+  dev: 'development',
+  prod: 'production',
+  perf: 'performance',
+  docs: 'documentation',
+  doc: 'documentation',
+  info: 'information',
+  async: 'asynchronous',
+  sync: 'synchronous',
+  middleware: 'middleware',
+  ws: 'websocket',
+  ci: 'continuous integration',
+  cd: 'continuous deployment',
+};
+
+const CONCEPT_EXPANSIONS: Record<string, string> = {
+  'error handling': 'error handling try catch error boundary exception',
+  'rate limit': 'rate limit throttle quota requests per minute',
+  'caching': 'caching cache invalidation ttl stale',
+  'streaming': 'streaming SSE server-sent events stream chunk delta',
+  'testing': 'testing test unit integration vitest mock',
+  'deployment': 'deployment deploy vercel serverless production',
+  'security': 'security authentication authorization token CORS XSS',
+  'logging': 'logging log metrics monitoring observability',
+  'search': 'search query retrieval vector keyword embedding',
+};
+
+// ─── Candidate Generation ─────────────────────────────────────
+
+function allAnchorStrings(anchors: QueryAnchors): string[] {
+  return [
+    ...anchors.filePaths,
+    ...anchors.endpoints,
+    ...anchors.codeSymbols,
+    ...anchors.directories,
+  ];
+}
+
+function ensureAnchorsInQuery(query: string, anchors: QueryAnchors): string {
+  const missing = allAnchorStrings(anchors).filter((a) => !query.includes(a));
+  return missing.length > 0 ? `${query} ${missing.join(' ')}` : query;
+}
+
+function synonymRewrite(query: string, anchors: QueryAnchors): RewriteCandidate {
+  let rewritten = query;
+  for (const [short, full] of Object.entries(SYNONYM_MAP)) {
+    const re = new RegExp(`\\b${short}\\b`, 'gi');
+    rewritten = rewritten.replace(re, full);
+  }
+  // If nothing changed, add a small variation by lowercasing and trimming
+  if (rewritten === query) {
+    rewritten = query.toLowerCase().replace(/[?!.]+$/, '').trim();
+    if (rewritten === query.toLowerCase()) {
+      rewritten = `${query} overview`;
+    }
+  }
+  rewritten = ensureAnchorsInQuery(rewritten, anchors);
+  return { query: rewritten, strategy: 'synonym', preservedAnchors: anchors };
+}
+
+function decomposeRewrite(query: string, anchors: QueryAnchors): RewriteCandidate[] {
+  // Split on conjunctions that join distinct topics
+  const parts = query
+    .split(/\b(?:and|but also|as well as|,\s*and|;\s*)\b/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 10);
+
+  if (parts.length < 2) {
+    // Can't decompose — return a concept expansion instead
+    return [expandRewrite(query, anchors)];
+  }
+
+  return parts.slice(0, 2).map((part) => {
+    const q = ensureAnchorsInQuery(part.replace(/[?!.]+$/, '').trim() + '?', anchors);
+    return { query: q, strategy: 'decompose' as const, preservedAnchors: anchors };
+  });
+}
+
+function expandRewrite(query: string, anchors: QueryAnchors): RewriteCandidate {
+  const q = query.toLowerCase();
+  let expanded = query;
+  for (const [concept, expansion] of Object.entries(CONCEPT_EXPANSIONS)) {
+    if (q.includes(concept)) {
+      expanded = `${query} ${expansion}`;
+      break;
+    }
+  }
+  if (expanded === query) {
+    // Generic expansion: add the category context
+    expanded = `${query} implementation details`;
+  }
+  expanded = ensureAnchorsInQuery(expanded, anchors);
+  return { query: expanded, strategy: 'expand', preservedAnchors: anchors };
+}
+
+/**
+ * Generate rewrite candidates based on the decision mode.
+ * Deterministic for none/light/strong. Async for strong-llm (LLM fallback).
+ * If strong-llm's LLM call fails, falls back to strong's deterministic candidates.
+ */
+export async function generateCandidates(
+  decision: RewriteDecision,
+  analysis: QueryAnalysis,
+): Promise<RewriteCandidate[]> {
+  const { original, anchors } = analysis;
+
+  switch (decision.mode) {
+    case 'none':
+      return [];
+
+    case 'light':
+      return [synonymRewrite(original, anchors)];
+
+    case 'strong': {
+      const synonym = synonymRewrite(original, anchors);
+      const decomposed = decomposeRewrite(original, anchors);
+      // Dedupe by query string
+      const seen = new Set<string>();
+      const candidates: RewriteCandidate[] = [];
+      for (const c of [synonym, ...decomposed]) {
+        if (!seen.has(c.query) && c.query !== original) {
+          seen.add(c.query);
+          candidates.push(c);
+        }
+      }
+      return candidates.slice(0, 3);
+    }
+
+    case 'strong-llm': {
+      // LLM rewrite — falls back to deterministic strong on failure.
+      try {
+        const { rewriteQueries } = await import('../llm/index.js');
+        const llmQueries = await rewriteQueries(original, anchors, 3);
+        if (llmQueries.length > 0) {
+          return llmQueries.map((q) => ({
+            query: ensureAnchorsInQuery(q, anchors),
+            strategy: 'llm' as const,
+            preservedAnchors: anchors,
+          }));
+        }
+      } catch {
+        // LLM failed — fall back to deterministic strong
+      }
+      // Fallback: same as strong mode
+      const fallbackSynonym = synonymRewrite(original, anchors);
+      const fallbackDecomposed = decomposeRewrite(original, anchors);
+      const seen = new Set<string>();
+      const fallbackCandidates: RewriteCandidate[] = [];
+      for (const c of [fallbackSynonym, ...fallbackDecomposed]) {
+        if (!seen.has(c.query) && c.query !== original) {
+          seen.add(c.query);
+          fallbackCandidates.push(c);
+        }
+      }
+      return fallbackCandidates.slice(0, 3);
+    }
+  }
+}
+
+// ─── Public: analyzeAndRewrite (convenience) ──────────────────
+
+export async function analyzeAndRewrite(
+  query: string,
+  category: QueryCategory,
+  firstPassResults: ScoredChunk[],
+  scoreSource: ScoreSource = 'rerank_boosted',
+  thresholds?: Partial<RewriteThresholds>,
+): Promise<RewriteResult> {
+  const analysis = analyzeQuery(query, category);
+  const confidence = computeConfidence(firstPassResults, scoreSource);
+  const decision = makeRewriteDecision(analysis, confidence, thresholds);
+  const candidates = await generateCandidates(decision, analysis);
+  return { decision, candidates, analysis };
+}

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeQuery, computeConfidence, makeRewriteDecision, DEFAULT_THRESHOLDS } from './rewrite.js';
+import {
+  analyzeQuery,
+  computeConfidence,
+  makeRewriteDecision,
+  generateCandidates,
+  analyzeAndRewrite,
+  DEFAULT_THRESHOLDS,
+} from './rewrite.js';
 import type { ScoredChunk, Chunk } from '../types.js';
 
 describe('analyzeQuery', () => {
@@ -263,5 +270,75 @@ describe('makeRewriteDecision', () => {
     const decision = makeRewriteDecision(analysis, confidence, { light: 0.9, strong: 0.95, llm: 0.99 });
     expect(decision.mode).toBe('none');
     expect(decision.thresholds.light).toBe(0.9);
+  });
+});
+
+describe('generateCandidates', () => {
+  it('returns empty array for mode none', async () => {
+    const analysis = analyzeQuery('What does src/utils/auth.ts do?', 'documentation');
+    const decision = makeRewriteDecision(
+      analysis,
+      computeConfidence([makeChunk('1', 0.9), makeChunk('2', 0.5)], 'rerank_boosted'),
+    );
+    // Force mode to none for test stability
+    const noneDecision = { ...decision, mode: 'none' as const };
+    const candidates = await generateCandidates(noneDecision, analysis);
+    expect(candidates).toEqual([]);
+  });
+
+  it('returns 1 candidate for light mode with synonym expansion', async () => {
+    const analysis = analyzeQuery('How does auth work?', 'general');
+    const decision = { ...makeRewriteDecision(
+      analysis,
+      computeConfidence([makeChunk('1', 0.3)], 'rerank_boosted'),
+    ), mode: 'light' as const };
+    const candidates = await generateCandidates(decision, analysis);
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].strategy).toBe('synonym');
+    expect(candidates[0].query).not.toBe(analysis.original);
+  });
+
+  it('returns 2-3 candidates for strong mode', async () => {
+    const analysis = analyzeQuery('explain the architecture and error handling', 'general');
+    const decision = { ...makeRewriteDecision(
+      analysis,
+      computeConfidence([makeChunk('1', 0.15)], 'rerank_boosted'),
+    ), mode: 'strong' as const };
+    const candidates = await generateCandidates(decision, analysis);
+    expect(candidates.length).toBeGreaterThanOrEqual(2);
+    expect(candidates.length).toBeLessThanOrEqual(3);
+    const strategies = candidates.map((c) => c.strategy);
+    expect(strategies).toContain('synonym');
+  });
+
+  it('preserves anchors in all candidates', async () => {
+    const analysis = analyzeQuery('explain src/utils/auth.ts and the error handling', 'general');
+    const decision = { ...makeRewriteDecision(
+      analysis,
+      computeConfidence([makeChunk('1', 0.15)], 'rerank_boosted'),
+    ), mode: 'strong' as const };
+    const candidates = await generateCandidates(decision, analysis);
+    for (const c of candidates) {
+      expect(c.query).toContain('src/utils/auth.ts');
+      expect(c.preservedAnchors.filePaths).toContain('src/utils/auth.ts');
+    }
+  });
+});
+
+describe('analyzeAndRewrite', () => {
+  it('returns full result with decision and candidates', async () => {
+    const results = [makeChunk('1', 0.9), makeChunk('2', 0.5)];
+    const rewriteResult = await analyzeAndRewrite('What does src/utils/auth.ts do?', 'documentation', results);
+    expect(rewriteResult.analysis.original).toBe('What does src/utils/auth.ts do?');
+    expect(rewriteResult.decision.mode).toBeDefined();
+    expect(rewriteResult.candidates).toBeDefined();
+  });
+
+  it('returns no candidates when mode is none', async () => {
+    const results = [makeChunk('1', 0.95), makeChunk('2', 0.6), makeChunk('3', 0.5)];
+    const rewriteResult = await analyzeAndRewrite('What does src/utils/auth.ts do?', 'documentation', results);
+    if (rewriteResult.decision.mode === 'none') {
+      expect(rewriteResult.candidates).toEqual([]);
+    }
   });
 });
