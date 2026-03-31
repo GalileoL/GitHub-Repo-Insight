@@ -29,26 +29,82 @@ Keep it up to date when architecture, APIs, or conventions change.
   - `AskRepoPanel` checks index status (`/api/rag/status`)
   - User triggers index (`/api/rag/ingest`) if needed
   - User asks question (`/api/rag/ask`, optional streaming)
-  - Backend runs classify -> hybrid retrieval -> rerank -> LLM answer
+  - Backend runs classify -> hybrid retrieval -> **conditional query rewrite** -> merge -> rerank -> LLM answer
   - Frontend renders answer and source citations
 
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
-  - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, streaming/non-streaming answer
+  - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, streaming/non-streaming answer
   - `api/rag/ingest.ts`: fetch GitHub data, chunk, embed, upsert
   - `api/rag/status.ts`: indexed/chunk count
 - Retrieval:
-  - `lib/rag/retrieval/router.ts`: query classification
-  - `lib/rag/retrieval/hybrid.ts`: vector + keyword merge
-  - `lib/rag/retrieval/rerank.ts`: result reranking
+  - `lib/rag/retrieval/router.ts`: query classification (4 categories: documentation/community/changes/general)
+  - `lib/rag/retrieval/hybrid.ts`: vector + keyword merge (RRF K=60, internally calls rerank)
+  - `lib/rag/retrieval/rerank.ts`: heuristic reranker (recency +0.15, content length +0.10, title match +0.05/term)
+  - `lib/rag/retrieval/rewrite.ts`: **NEW** — conditional query rewrite (analysis, confidence, decision, candidates)
+  - `lib/rag/retrieval/merge.ts`: **NEW** — multi-pass result merge, dedup, diagnostic snapshots
 - LLM:
-  - `lib/rag/llm/index.ts`: provider config, prompt, stream/non-stream answer generation
+  - `lib/rag/llm/index.ts`: provider config, prompt, stream/non-stream answer generation, **`rewriteQueries()` for strong-llm mode**
 - Storage:
   - `lib/rag/storage/index.ts`: Upstash Vector operations + cached chunk count
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: GitHub token verify + daily ask/ingest limits in Redis
+- Types:
+  - `lib/rag/types.ts`: all shared types including 15 query rewrite interfaces
 
-## 5) SSE Streaming Notes (UPDATED: Phase 1 Optimization)
+## 5) Conditional Query Rewrite Pipeline (NEW — 2026-03-31)
+
+Design principle: **deterministic-first, selective LLM fallback only.**
+
+### Pipeline Flow (in ask.ts)
+```
+classifyQuery(question) → { category, typeFilter }
+hybridSearch(original)  → firstPass results (rerank-boosted scores)
+analyzeAndRewrite(question, category, firstPass) → { decision, candidates, analysis }
+  ├── analyzeQuery() → anchors, risk signals, risk score
+  ├── computeConfidence() → retrieval confidence score
+  ├── makeRewriteDecision() → mode (none/light/strong/strong-llm)
+  └── generateCandidates() → rewrite candidates
+hybridSearch(candidate1, candidate2, ...) → parallel fan-out
+mergeResults(firstPass, rewritePasses) → dedupe by chunk ID, max-wins + consensus bonus
+rerank(merged, original, topK=8)  → second rerank pass against original query
+generateAnswer/Stream() → LLM answer
+```
+
+### Scoring
+- **Query Risk Score (0–1):** weighted boolean signals — vague (0.30), complex (0.25), implicit context (0.20), comparative (0.15), negation (0.10). Anchor discount: filePaths ×0.5, endpoints ×0.6, codeSymbols ×0.7, directories ×0.7 (lowest wins, don't stack)
+- **Retrieval Confidence (0–1):** topScore (0.35), normalizedGap (0.25), coverageRatio (0.25), avgScore (0.15). Absolute coverage floor of 0.3
+- **Combined:** `rewriteScore = (riskScore × 0.6) + ((1 - confidenceScore) × 0.4)`
+
+### Rewrite Modes
+| Mode | Interval | Candidates | Extra latency |
+|------|----------|------------|---------------|
+| `none` | [0, 0.3) | 0 | ~0ms |
+| `light` | [0.3, 0.55) | 1 (synonym) | ~200-400ms |
+| `strong` | [0.55, 0.8) | 2-3 (synonym + decompose/expand) | ~200-400ms |
+| `strong-llm` | [0.8, 1.0] | 2-3 (LLM-generated) | ~700-900ms |
+
+**strong-llm guard:** ALL three required: rewriteScore ≥ 0.8, confidenceScore < 0.3, all anchors empty. Falls back to deterministic strong on LLM failure.
+
+### Merge Strategy
+- Max-wins scoring: `max(originalScore, ...rewriteScores) + (sourceCount - 1) × 0.05`
+- Exact-ID dedup via `Map<string, MergedChunk>`
+- Tie-break within 0.01: prefer chunks from original query (`fromOriginal: true`)
+- Double-rerank: hybridSearch internally reranks; final rerank on merged set against original query (intentional)
+
+### Structured Logging
+Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScore, confidenceScore, anchorTypes, candidateCount, overlap, timing, counts.
+
+### Test Coverage
+- 37 tests in `rewrite.test.ts` (anchors, risk signals, scoring, confidence, decision, candidates, analyzeAndRewrite)
+- 10 tests in `merge.test.ts` (dedup, max-wins, consensus bonus, tie-break, snapshots)
+- 7 existing tests in `rag.test.ts` (SSE streaming — unaffected)
+
+### Spec & Plan
+- Design spec: `docs/superpowers/specs/2026-03-31-conditional-query-rewrite-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-03-31-conditional-query-rewrite.md`
+
+## 6) SSE Streaming Notes (UPDATED: Phase 1 Optimization)
 
 ### Protocol & Lifecycle (v2.0)
 - Server side (`api/rag/ask.ts`):
@@ -82,7 +138,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - Metrics: TTFB, duration, cancel rate, fail rate
 - Dedicated tests for stream interruption scenarios
 
-## 6) Markdown Rendering Notes
+## 7) Markdown Rendering Notes
 - Rendering is custom, not `react-markdown`.
 - `src/utils/markdown-parser.tsx` (new):
   - Parses block-level markdown: paragraphs, code fences, blockquotes, tables, lists (nested), and metadata.
@@ -101,7 +157,7 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Provides copy-to-clipboard on code blocks + download-as-markdown button in UI.
 - This is intentionally constrained for controlled LLM output; avoids a full markdown renderer.
 
-## 7) Stream Interruption / Robustness Status (UPDATED: Phase 1 Complete)
+## 8) Stream Interruption / Robustness Status (UPDATED: Phase 1 Complete)
 - ✅ Implemented on Phase 1:
   - Client-side AbortController for user-initiated cancel
   - Server detects client disconnect (req.on('close')) and stops LLM stream
@@ -117,7 +173,7 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Metrics & monitoring (TTFB, duration, cancel rate)
   - Comprehensive stream interrupt tests
 
-## 8) Commands
+## 9) Commands
 - Install: `npm install`
 - Frontend dev: `npm run dev`
 - API dev (Vercel): `npm run dev:api`
@@ -125,7 +181,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - Lint: `npm run lint`
 - Preview: `npm run preview`
 
-## 9) Environment Essentials
+## 10) Environment Essentials
 - OAuth:
   - `VITE_GITHUB_CLIENT_ID`
   - `GITHUB_CLIENT_ID`
@@ -144,7 +200,7 @@ Keep it up to date when architecture, APIs, or conventions change.
   - `RAG_DAILY_INGEST_LIMIT`
   - `ADMIN_GITHUB_USERS`
 
-## 10) Virtual List Implementation
+## 11) Virtual List Implementation
 
 - **Component**: `src/components/charts/ReleaseTimeline.tsx`
 - **Library**: `@tanstack/react-virtual` v3 (`useVirtualizer`)
@@ -154,7 +210,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - **Data flow**: `GitHubRelease.body` → `transformReleases` (`body: release.body`) → `ReleaseTimelineData.body: string | null` (non-optional) → component
 - `SourceList` also uses `@tanstack/react-virtual` but fixed-height (92px)
 
-## 11) Update Checklist (When Editing This Repo)
+## 12) Update Checklist (When Editing This Repo)
 Update this file when any of these changes happen:
 - API contract changes (`api/rag/*`, request or response shape) ✓ track phase updates
 - Retrieval/rerank/LLM pipeline logic changes
@@ -164,7 +220,7 @@ Update this file when any of these changes happen:
 - Build scripts or required env vars change
 - Stream control flow or status state changes ✓ useAskRepo exports
 
-## 11) SSE Optimization Roadmap (All Phases)
+## 13) SSE Optimization Roadmap (All Phases)
 
 ### Phase 1 ✅ (2026-03-19 — COMPLETE)
 - [x] Client AbortController support
@@ -242,7 +298,7 @@ Update this file when any of these changes happen:
 - [ ] Alert on: high error rate, > threshold connection churn
 - Files: `docs/`, (new) `lib/rag/logging/index.ts`, (new) `api/analytics/streams.ts`
 
-## 12) Known Risks & Constraints
+## 14) Known Risks & Constraints
 - Markdown renderer currently intentionally constrained; Phase 5 needed for full feature set
 - Stream reconnect window: ~5 min (Redis TTL); after that partial answer is lost
 - Vercel cold start may interrupt early deltas; Phase 2 heartbeat helps
