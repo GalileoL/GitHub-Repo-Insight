@@ -86,11 +86,13 @@ Each source includes metadata like created date, author, and state — use these
 Rules:
 - Answer based ONLY on the provided context. Do not make up information.
 - If the context doesn't contain enough information, say so honestly and explain what data is available.
-- When asked about counts or statistics, count the items visible in the provided context and clarify that the count is based on the indexed data (not the full repository).
+- If the context includes "[Verified data from GitHub API]", treat those numbers as exact facts — state them confidently without hedging or approximating. Do NOT say "based on indexed data" for verified API data.
+- When asked about counts or statistics without verified API data, count the items visible in the provided context and clarify that the count is based on the indexed data (not the full repository).
 - Reference specific sources by mentioning issue numbers, PR numbers, release names, or section titles.
 - Keep answers concise but informative.
 - Use markdown formatting for readability.
 - When referencing a source, use the format [Source N] to cite it.
+- Reply in the same language the user used in their question.
 - Today's date is {{TODAY}}.`;
 
 function buildMessages(question: string, repo: string, chunks: ScoredChunk[], contextPrefix?: string) {

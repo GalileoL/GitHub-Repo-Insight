@@ -58,36 +58,106 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(429).json({ error: rateLimit.error });
     }
 
-    // ── Intent-based routing: analytics queries bypass RAG entirely ──
+    // ── Intent classification ──
     const intentResult = classifyIntent(question);
+    const needsAnalytics = intentResult.intent !== 'semantic_qa' && intentResult.analyticsQuery !== null;
 
-    if (intentResult.intent === 'repo_analytics' && intentResult.analyticsQuery) {
-      const result = await executeAnalyticsQuery(repo, intentResult.analyticsQuery, token);
-      return res.status(200).json({ answer: result.answer, sources: [] });
-    }
-
-    // ── Hybrid: compute exact analytics facts to prepend to RAG context ──
-    let analyticsPrefix = '';
-    if (intentResult.intent === 'hybrid_analytics_qa' && intentResult.analyticsQuery) {
+    // ── Compute exact analytics data when needed ──
+    let analyticsContext = '';
+    if (needsAnalytics) {
       try {
-        const analyticsResult = await executeAnalyticsQuery(repo, intentResult.analyticsQuery, token);
-        analyticsPrefix = `[Exact data from GitHub API] ${analyticsResult.answer}\n\n`;
+        const analyticsResult = await executeAnalyticsQuery(repo, intentResult.analyticsQuery!, token);
+        const { data } = analyticsResult;
+        // Build structured context for the LLM — exact facts, not prose
+        const lines = [
+          `[Verified data from GitHub API — these numbers are exact, do NOT approximate or hedge]`,
+          `Entity: ${data.entity}`,
+          `Operation: ${data.op}`,
+          `State filter: ${data.state}`,
+          `Count: ${data.count}`,
+        ];
+        if (data.dateRange) {
+          lines.push(`Date range: ${data.dateRange.since.slice(0, 10)} to ${data.dateRange.until.slice(0, 10)}`);
+        }
+        if (data.truncated) {
+          lines.push(`Note: pagination limit reached — count may be a lower bound`);
+        }
+        if (data.topAuthors?.length) {
+          lines.push(`Top authors: ${data.topAuthors.map((a) => `${a.author} (${a.count})`).join(', ')}`);
+        }
+        analyticsContext = lines.join('\n') + '\n\n';
       } catch (analyticsErr) {
         console.log(JSON.stringify({
-          type: 'analytics_hybrid_fallback',
+          type: 'analytics_fallback',
           repo,
+          intent: intentResult.intent,
           error: analyticsErr instanceof Error ? analyticsErr.message : 'Unknown error',
         }));
-        // Continue with RAG-only — analytics prefix stays empty
+        // On failure: repo_analytics degrades to semantic_qa, hybrid continues with RAG only
       }
+    }
+
+    // ── For pure analytics with successful data, skip RAG but still use LLM ──
+    if (intentResult.intent === 'repo_analytics' && analyticsContext) {
+      // No RAG retrieval needed — LLM formats the exact data into a natural answer
+      const chunks: ScoredChunk[] = [];
+
+      const wantStream = req.body?.stream === true;
+      if (wantStream) {
+        const metrics = new ServerMetricsRecorder();
+        const requestId = metrics.getRequestId();
+        metrics.setChunkCount(0);
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('X-Request-ID', requestId);
+
+        res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question })}\n\n`);
+
+        let aborted = false;
+        const cleanup = () => { aborted = true; };
+        req.on('close', cleanup);
+        req.on('error', cleanup);
+
+        let seq = 0;
+        try {
+          const generator = generateAnswerStream(question, repo, chunks, analyticsContext);
+          for await (const delta of generator) {
+            if (aborted) break;
+            seq += 1;
+            res.write(`data: ${JSON.stringify({ type: 'delta', seq, content: delta })}\n\n`);
+          }
+          if (!aborted) {
+            res.write(`data: ${JSON.stringify({ type: 'sources', sources: [] })}\n\n`);
+            res.write(`data: [DONE]\n\n`);
+          }
+        } catch (streamErr) {
+          const msg = streamErr instanceof Error ? streamErr.message : 'Stream error';
+          if (res.writable) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+          }
+        } finally {
+          req.removeListener('close', cleanup);
+          req.removeListener('error', cleanup);
+          logStreamMetrics(`[ask.ts analytics-stream] ${repo}`, metrics.end());
+          res.end();
+        }
+        return;
+      }
+
+      const result = await generateAnswer(question, repo, chunks, analyticsContext);
+      return res.status(200).json(result);
     }
 
     // Fast-fail for repos that have not been indexed yet.
     const chunkCount = await countRepoChunks(repo);
     if (chunkCount === 0) {
-      // If hybrid mode already fetched analytics data, return that instead of "not indexed"
-      if (analyticsPrefix) {
-        return res.status(200).json({ answer: analyticsPrefix.trim(), sources: [] });
+      // If analytics data was fetched, let LLM format it even without RAG context
+      if (analyticsContext) {
+        const result = await generateAnswer(question, repo, [], analyticsContext);
+        return res.status(200).json(result);
       }
       return res.status(200).json({
         answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
@@ -243,7 +313,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let seq = 0;
       try {
         const sources = buildSources(chunks);
-        const generator = generateAnswerStream(question, repo, chunks, analyticsPrefix || undefined);
+        const generator = generateAnswerStream(question, repo, chunks, analyticsContext || undefined);
 
         // --- Heartbeat: send ping every 20s to prevent proxy timeout ---
         const startHeartbeat = () => {
@@ -337,7 +407,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } else {
       // --- Non-streaming (backwards compatible) ---
-      const result = await generateAnswer(question, repo, chunks, analyticsPrefix || undefined);
+      const result = await generateAnswer(question, repo, chunks, analyticsContext || undefined);
       return res.status(200).json(result);
     }
   } catch (err) {
