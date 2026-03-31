@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { ScoredChunk, Source, AskResponse } from '../types.js';
+import type { ScoredChunk, Source, AskResponse, QueryAnchors } from '../types.js';
 
 /** Supported LLM providers */
 type LLMProvider = 'openai' | 'deepseek' | 'groq' | 'gemini' | 'claude';
@@ -147,6 +147,61 @@ export async function* generateAnswerStream(
     const content = chunk.choices[0]?.delta?.content;
     if (content) yield content;
   }
+}
+
+const REWRITE_SYSTEM_PROMPT = `You are a search query rewriting assistant. Given a user's question about a GitHub repository, generate semantically distinct reformulations that will improve search retrieval.
+
+Rules:
+- Generate exactly the requested number of reformulations
+- Each reformulation should approach the question from a different angle
+- Expand implicit concepts into explicit implementation-level terms
+- If anchor terms are provided, preserve them VERBATIM in every reformulation
+- Keep reformulations concise (under 100 words each)
+- Return ONLY a JSON array of strings, no other text`;
+
+/**
+ * LLM-based query rewrite for strong-llm mode.
+ * Generates semantically distinct reformulations of the original query.
+ * Called only when deterministic rewrites are insufficient.
+ */
+export async function rewriteQueries(
+  query: string,
+  anchors: QueryAnchors,
+  count: number = 3,
+): Promise<string[]> {
+  const provider = getProvider();
+  const model = LLM_CONFIG[provider].model;
+
+  const anchorList = [
+    ...anchors.filePaths,
+    ...anchors.endpoints,
+    ...anchors.codeSymbols,
+    ...anchors.directories,
+  ];
+  const anchorInstruction = anchorList.length > 0
+    ? `\n\nAnchor terms to preserve verbatim: ${anchorList.join(', ')}`
+    : '';
+
+  const response = await getClient().chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: REWRITE_SYSTEM_PROMPT },
+      { role: 'user', content: `Generate ${count} reformulations of: "${query}"${anchorInstruction}` },
+    ],
+    temperature: 0.7,
+    max_tokens: 300,
+  });
+
+  const content = response.choices[0]?.message?.content ?? '[]';
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.every((s: unknown) => typeof s === 'string')) {
+      return parsed.slice(0, count);
+    }
+  } catch {
+    // Parse failure — return empty, caller falls back to deterministic
+  }
+  return [];
 }
 
 /**
