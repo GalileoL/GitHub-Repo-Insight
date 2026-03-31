@@ -114,7 +114,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { before: beforeRewrite, after: afterRewrite } =
       rewriteResult.decision.mode !== 'none'
         ? buildDiagnosticSnapshots(firstPass, chunks, 8)
-        : { before: { topScore: firstPass[0]?.score ?? 0, avgScore: 0, chunkIds: firstPass.map((c) => c.chunk.id), coverageRatio: 0 }, after: null };
+        : {
+            before: {
+              topScore: firstPass[0]?.score ?? 0,
+              avgScore:
+                firstPass.length > 0
+                  ? firstPass.reduce((sum, c) => sum + (c.score ?? 0), 0) / firstPass.length
+                  : 0,
+              chunkIds: firstPass.map((c) => c.chunk.id),
+              coverageRatio: 1,
+            },
+            after: null,
+          };
 
     const diagnostics: RetrievalDiagnostics = {
       requestId: '', // set below if streaming
