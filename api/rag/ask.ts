@@ -76,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (firstPass.length === 0) {
       return res.status(200).json({
-        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+        answer: 'I could not find any relevant code or documentation in this repository for your question. Try rephrasing your question or adjusting any filters you are using.',
         sources: [],
       });
     }
