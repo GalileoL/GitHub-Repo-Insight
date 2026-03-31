@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mergeResults, toScoredChunks, buildDiagnosticSnapshots } from './merge.js';
-import type { ScoredChunk, Chunk, RewriteCandidate } from '../types.js';
+import type { ScoredChunk, RewriteCandidate } from '../types.js';
 
 function makeChunk(id: string, score: number): ScoredChunk {
   return {
