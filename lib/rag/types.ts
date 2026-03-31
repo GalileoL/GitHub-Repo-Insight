@@ -112,3 +112,142 @@ export interface RawCommit {
   date: string;
   author: string | null;
 }
+
+// ═══ Query Rewrite Types ══════════════════════════════════════
+
+/** Anchors extracted from the query that must be preserved verbatim */
+export interface QueryAnchors {
+  filePaths: string[];
+  endpoints: string[];
+  codeSymbols: string[];
+  directories: string[];
+}
+
+/** Which anchor type caused the risk discount, and by how much */
+export interface AnchorDiscount {
+  appliedMultiplier: number;
+  anchorType: keyof QueryAnchors;
+  rawRiskScore: number;
+  discountedRiskScore: number;
+}
+
+/** Risk signals that indicate the query may need rewriting */
+export interface QueryRiskSignals {
+  isVague: boolean;
+  isComplex: boolean;
+  hasNegation: boolean;
+  isComparative: boolean;
+  hasImplicitContext: boolean;
+}
+
+/** Full analysis result for a query */
+export interface QueryAnalysis {
+  original: string;
+  anchors: QueryAnchors;
+  riskSignals: QueryRiskSignals;
+  riskScore: number;
+  anchorDiscount: AnchorDiscount | null;
+  category: QueryCategory;
+}
+
+// 'hybrid_rrf':     raw RRF fusion scores (before rerank) — not currently exposed
+// 'rerank_boosted': scores after hybridSearch's internal rerank — current default
+// 'normalized':     reserved for future use
+export type ScoreSource = 'hybrid_rrf' | 'rerank_boosted' | 'normalized';
+
+/** Signals computed from first-pass retrieval results */
+export interface RetrievalConfidence {
+  topScore: number;
+  scoreGap: number;
+  coverageRatio: number;
+  avgScore: number;
+  confidenceScore: number;
+  scoreSource: ScoreSource;
+}
+
+export type RewriteMode = 'none' | 'light' | 'strong' | 'strong-llm';
+
+export type ReasonCode =
+  | 'vague_query' | 'complex_query' | 'negation_present'
+  | 'comparative_query' | 'implicit_context'
+  | 'low_top_score' | 'small_score_gap' | 'low_coverage' | 'low_avg_score'
+  | 'anchors_present' | 'high_confidence';
+
+export interface RewriteThresholds {
+  light: number;
+  strong: number;
+  llm: number;
+  confidenceFloor: number;
+  consensusBonus: number;
+}
+
+export interface RewriteDecision {
+  mode: RewriteMode;
+  reasonCodes: ReasonCode[];
+  reason: string;
+  rewriteScore: number;
+  thresholds: RewriteThresholds;
+}
+
+export type RewriteStrategy = 'synonym' | 'decompose' | 'expand' | 'llm';
+
+export interface RewriteCandidate {
+  query: string;
+  strategy: RewriteStrategy;
+  preservedAnchors: QueryAnchors;
+}
+
+export interface RewriteResult {
+  decision: RewriteDecision;
+  candidates: RewriteCandidate[];
+  analysis: QueryAnalysis;
+}
+
+export interface MergedChunk {
+  chunk: Chunk;
+  originalScore: number | null;
+  rewriteScores: Record<number, number>;
+  mergedScore: number;
+  sourceQueries: string[];
+  fromOriginal: boolean;
+}
+
+export interface RetrievalSnapshot {
+  topScore: number;
+  avgScore: number;
+  chunkIds: string[];
+  coverageRatio: number;
+}
+
+export interface RetrievalComparison extends RetrievalSnapshot {
+  newChunkIds: string[];
+  droppedChunkIds: string[];
+  overlapRatio: number;
+}
+
+export interface RetrievalDiagnostics {
+  requestId: string;
+  originalQuery: string;
+  repo: string;
+  analysis: QueryAnalysis;
+  firstPassConfidence: RetrievalConfidence;
+  decision: RewriteDecision;
+  candidates: RewriteCandidate[];
+  beforeRewrite: RetrievalSnapshot;
+  afterRewrite: RetrievalComparison | null;
+  timing: {
+    totalRetrievalMs: number;
+    firstPassMs: number;
+    rewriteDecisionMs: number;
+    rewriteSearchMs: number;
+    llmRewriteMs: number | null;
+    mergeMs: number;
+    rerankMs: number;
+  };
+  counts: {
+    firstPassChunks: number;
+    mergedChunks: number;
+    deduplicatedChunks: number;
+    finalChunks: number;
+  };
+}
