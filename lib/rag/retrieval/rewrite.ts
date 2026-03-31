@@ -53,7 +53,7 @@ const STOPWORDS = new Set([
 // ─── Anchor Extraction ───────────────────────────────────────
 
 const FILE_PATH_RE = /(?:[\w.-]+\/)+[\w.-]+\.\w{1,5}/g;
-const ENDPOINT_RE = /(?:(?:GET|POST|PUT|DELETE|PATCH)\s+\/[\w\/.-]+|\/api\/[\w\/.-]+)/gi;
+const ENDPOINT_RE = /(?:(?:GET|POST|PUT|DELETE|PATCH)\s+\/[\w/.-]+|\/api\/[\w/.-]+)/gi;
 const DIRECTORY_RE = /(?:[\w.-]+\/){2,}/g;
 const BACKTICK_SYMBOL_RE = /`([A-Za-z_]\w+)`/g;
 const PASCAL_CAMEL_RE = /\b([A-Z][a-z]+[A-Z]\w*|[a-z]+[A-Z]\w*)\b/g;
@@ -70,7 +70,7 @@ function extractAnchors(query: string): QueryAnchors {
   ));
 
   // Code symbols: backtick-wrapped or PascalCase/camelCase, excluding file path fragments
-  const filePathTokens = new Set(filePaths.flatMap((fp) => fp.split(/[\/\.]/)));
+  const filePathTokens = new Set(filePaths.flatMap((fp) => fp.split(/[/.]/)));
   const backtickMatches: string[] = [];
   let m: RegExpExecArray | null;
   const btRe = new RegExp(BACKTICK_SYMBOL_RE.source, BACKTICK_SYMBOL_RE.flags);
