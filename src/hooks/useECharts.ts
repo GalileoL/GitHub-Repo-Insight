@@ -21,6 +21,8 @@ echarts.use([
   GridComponent,
 ]);
 
+const DEBOUNCE_MS = 200;
+
 /**
  * A hook that manages an ECharts instance using a callback ref.
  *
@@ -33,10 +35,40 @@ echarts.use([
 export function useECharts(option: EChartsOption | null) {
   const chartRef = useRef<echarts.ECharts | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const resizeTimerRef = useRef<number | null>(null);
+  const setOptionTimerRef = useRef<number | null>(null);
   // Keep a mutable ref to the latest option so the callback ref can apply
   // it immediately when the container appears.
   const optionRef = useRef<EChartsOption | null>(option);
   useEffect(() => { optionRef.current = option; });
+
+  const clearResizeTimer = useCallback(() => {
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+  }, []);
+
+  const clearSetOptionTimer = useCallback(() => {
+    if (setOptionTimerRef.current !== null) {
+      window.clearTimeout(setOptionTimerRef.current);
+      setOptionTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleResize = useCallback(() => {
+    clearResizeTimer();
+    resizeTimerRef.current = window.setTimeout(() => {
+      chartRef.current?.resize();
+    }, DEBOUNCE_MS);
+  }, [clearResizeTimer]);
+
+  const scheduleSetOption = useCallback((nextOption: EChartsOption) => {
+    clearSetOptionTimer();
+    setOptionTimerRef.current = window.setTimeout(() => {
+      chartRef.current?.setOption(nextOption, true);
+    }, DEBOUNCE_MS);
+  }, [clearSetOptionTimer]);
 
   /**
    * Callback ref — called by React when the <div> mounts (node != null)
@@ -48,6 +80,8 @@ export function useECharts(option: EChartsOption | null) {
       observerRef.current.disconnect();
       observerRef.current = null;
     }
+    clearResizeTimer();
+    clearSetOptionTimer();
     if (chartRef.current) {
       chartRef.current.dispose();
       chartRef.current = null;
@@ -56,34 +90,36 @@ export function useECharts(option: EChartsOption | null) {
     if (node) {
       chartRef.current = echarts.init(node, undefined, { renderer: 'canvas' });
 
-      // Apply the current option immediately if available
+      // Apply immediately on mount to avoid a brief blank chart.
       if (optionRef.current) {
         chartRef.current.setOption(optionRef.current, true);
       }
 
       observerRef.current = new ResizeObserver(() => {
-        chartRef.current?.resize();
+        scheduleResize();
       });
       observerRef.current.observe(node);
     }
-  }, []);
+  }, [clearResizeTimer, clearSetOptionTimer, scheduleResize, scheduleSetOption]);
 
   // Update the chart whenever the option object changes
   useEffect(() => {
     if (chartRef.current && option) {
-      chartRef.current.setOption(option, true);
+      scheduleSetOption(option);
     }
-  }, [option]);
+  }, [option, scheduleSetOption]);
 
   // Safety-net cleanup on unmount
   useEffect(() => {
     return () => {
       observerRef.current?.disconnect();
       observerRef.current = null;
+      clearResizeTimer();
+      clearSetOptionTimer();
       chartRef.current?.dispose();
       chartRef.current = null;
     };
-  }, []);
+  }, [clearResizeTimer, clearSetOptionTimer]);
 
   return setContainerRef;
 }
