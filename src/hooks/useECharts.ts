@@ -21,6 +21,8 @@ echarts.use([
   GridComponent,
 ]);
 
+const DEBOUNCE_MS = 200;
+
 /**
  * A hook that manages an ECharts instance using a callback ref.
  *
@@ -58,14 +60,14 @@ export function useECharts(option: EChartsOption | null) {
     clearResizeTimer();
     resizeTimerRef.current = window.setTimeout(() => {
       chartRef.current?.resize();
-    }, 200);
+    }, DEBOUNCE_MS);
   }, [clearResizeTimer]);
 
   const scheduleSetOption = useCallback((nextOption: EChartsOption) => {
     clearSetOptionTimer();
     setOptionTimerRef.current = window.setTimeout(() => {
       chartRef.current?.setOption(nextOption, true);
-    }, 200);
+    }, DEBOUNCE_MS);
   }, [clearSetOptionTimer]);
 
   /**
@@ -88,9 +90,9 @@ export function useECharts(option: EChartsOption | null) {
     if (node) {
       chartRef.current = echarts.init(node, undefined, { renderer: 'canvas' });
 
-      // Apply the current option immediately if available
+      // Apply immediately on mount to avoid a brief blank chart.
       if (optionRef.current) {
-        scheduleSetOption(optionRef.current);
+        chartRef.current.setOption(optionRef.current, true);
       }
 
       observerRef.current = new ResizeObserver(() => {
