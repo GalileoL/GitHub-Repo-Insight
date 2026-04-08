@@ -6,6 +6,7 @@ export interface AskHistoryEntry {
   answer: string;
   sources: Source[];
   timestamp: number;
+  shareUrl?: string;
 }
 
 const STORAGE_KEY_PREFIX = 'rag-history:';
@@ -48,10 +49,25 @@ export function useAskHistory(repo: string) {
     [repo],
   );
 
+  const updateEntry = useCallback(
+    (question: string, patch: Partial<AskHistoryEntry>) => {
+      setHistory((prev) => {
+        const next = prev.map((e) =>
+          e.question.trim().toLowerCase() === question.trim().toLowerCase()
+            ? { ...e, ...patch }
+            : e,
+        );
+        saveHistory(repo, next);
+        return next;
+      });
+    },
+    [repo],
+  );
+
   const clearHistory = useCallback(() => {
     localStorage.removeItem(getStorageKey(repo));
     setHistory([]);
   }, [repo]);
 
-  return { history, addEntry, clearHistory };
+  return { history, addEntry, updateEntry, clearHistory };
 }

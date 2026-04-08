@@ -59,7 +59,7 @@ export function useAskRepo(repo: string) {
   const isResumingRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { history, addEntry, clearHistory } = useAskHistory(repo);
+  const { history, addEntry, updateEntry, clearHistory } = useAskHistory(repo);
 
   const mutation = useMutation<void, Error, string>({
     mutationFn: async (question: string) => {
@@ -315,6 +315,7 @@ export function useAskRepo(repo: string) {
     isSuccess: streamStatus === 'done',
     reset,
     history,
+    updateEntry,
     clearHistory,
   };
 }
