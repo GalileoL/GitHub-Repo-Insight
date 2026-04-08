@@ -7,6 +7,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    return res.status(503).json({ error: 'Share links are unavailable because Redis is not configured.' });
+  }
+
   const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || undefined;
   const auth = await verifyGitHubToken(token);
   if (!auth.authenticated) {
