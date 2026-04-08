@@ -34,7 +34,17 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
     const text = q ?? question;
     if (!text.trim()) return;
     setQuestion(text);
+    // Clear share state from previous question
+    setShareUrl(null);
+    setShareError(null);
     ask.ask(text);
+  };
+
+  const handleClear = () => {
+    setQuestion('');
+    setShareUrl(null);
+    setShareError(null);
+    ask.reset();
   };
 
   const handleShare = async () => {
@@ -62,7 +72,10 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
       }
 
       const data = await res.json();
-      setShareUrl(window.location.origin + data.url);
+      const url = window.location.origin + data.url;
+      setShareUrl(url);
+      // Persist share URL to history entry
+      ask.updateEntry(question, { shareUrl: url });
     } catch (err) {
       setShareError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -243,13 +256,24 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
               disabled={isAsking}
               className="w-full rounded-xl border border-border-default bg-bg-surface px-4 py-3 pr-24 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-teal transition-colors disabled:opacity-60"
             />
-            <button
-              onClick={() => handleAsk()}
-              disabled={isAsking || !question.trim()}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg bg-accent-teal px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-teal/90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isAsking ? '...' : 'Ask'}
-            </button>
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+              {ask.streamingAnswer && !isAsking && (
+                <button
+                  onClick={handleClear}
+                  className="rounded-lg border border-border-default px-3 py-1.5 text-sm text-text-muted transition-colors hover:text-text-primary hover:border-border-hover"
+                  title="Clear and start over"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={() => handleAsk()}
+                disabled={isAsking || !question.trim()}
+                className="rounded-lg bg-accent-teal px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-teal/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAsking ? '...' : 'Ask'}
+              </button>
+            </div>
           </div>
 
           {/* Suggested questions */}
@@ -325,6 +349,8 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
               history={ask.history}
               onSelect={(entry) => {
                 setQuestion(entry.question);
+                setShareUrl(entry.shareUrl ?? null);
+                setShareError(null);
                 ask.showCached(entry);
               }}
               onClear={ask.clearHistory}
@@ -368,9 +394,19 @@ function HistorySection({
             onClick={() => onSelect(entry)}
             className="w-full text-left rounded-lg border border-border-default bg-bg-surface px-4 py-3 hover:border-accent-teal/40 transition-colors group"
           >
-            <p className="text-sm text-text-primary group-hover:text-accent-teal transition-colors truncate">
-              {entry.question}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-text-primary group-hover:text-accent-teal transition-colors truncate flex-1">
+                {entry.question}
+              </p>
+              {entry.shareUrl && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-accent-teal/10 px-2 py-0.5 text-[10px] font-medium text-accent-teal">
+                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.753a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.343 8.22" />
+                  </svg>
+                  Shared
+                </span>
+              )}
+            </div>
             <p className="text-xs text-text-muted mt-1 line-clamp-2">
               {entry.answer.slice(0, 120)}…
             </p>
