@@ -31,11 +31,14 @@ Keep it up to date when architecture, APIs, or conventions change.
   - User asks question (`/api/rag/ask`, optional streaming)
   - Backend runs classify -> hybrid retrieval -> **conditional query rewrite** -> merge -> rerank -> LLM answer
   - Frontend renders answer and source citations
+  - User can optionally create a share link, which is stored in Redis and expires after 7 days
 
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
   - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, streaming/non-streaming answer
   - `api/rag/ingest.ts`: fetch GitHub data, chunk, embed, upsert
+  - `api/rag/resume.ts`: resume interrupted SSE answer streams using Redis session state
+  - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis
   - `api/rag/status.ts`: indexed/chunk count
 - Retrieval:
   - `lib/rag/retrieval/router.ts`: query classification (4 categories: documentation/community/changes/general)
@@ -46,7 +49,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - LLM:
   - `lib/rag/llm/index.ts`: provider config, prompt, stream/non-stream answer generation, **`rewriteQueries()` for strong-llm mode**
 - Storage:
-  - `lib/rag/storage/index.ts`: Upstash Vector operations + cached chunk count
+  - `lib/rag/storage/index.ts`: Upstash Vector operations + Redis helpers for chunk counts, stream sessions, and share entries
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: GitHub token verify + daily ask/ingest limits in Redis
 - Types:
@@ -209,6 +212,14 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - **Body summary**: `stripMarkdown()` (module-scope) uses context-aware replacements (capturing groups for bold/italic, line-anchored `^` for headings/lists/blockquotes) — avoids corrupting `C#`, `bug-fix`, version strings. `truncateCodePoints(str, 160)` (early-exit iterator) replaces `[...str].slice()` for emoji-safe, allocation-efficient truncation → `line-clamp-2`
 - **Data flow**: `GitHubRelease.body` → `transformReleases` (`body: release.body`) → `ReleaseTimelineData.body: string | null` (non-optional) → component
 - `SourceList` also uses `@tanstack/react-virtual` but fixed-height (92px)
+
+## Redis Usage Summary
+
+- `rag:usage:<login>:<YYYY-MM-DD>`: ask quota counter, 48h TTL
+- `rag:ingest:<login>:<YYYY-MM-DD>`: ingest quota counter, 48h TTL
+- `rag:chunk-count:<repo>`: cached indexed chunk count for status/fast-fail checks
+- `rag:stream:<requestId>`: SSE resume session state, 5 min TTL
+- `rag:share:<shareId>`: shared answer payload, 7 day TTL
 
 ## 12) Update Checklist (When Editing This Repo)
 Update this file when any of these changes happen:

@@ -237,8 +237,7 @@ export async function setStreamSession(
 ): Promise<void> {
   const r = getRedis();
   if (!r) return;
-  await r.set(getStreamSessionKey(session.requestId), JSON.stringify(session));
-  await r.expire(getStreamSessionKey(session.requestId), ttlSeconds);
+  await r.set(getStreamSessionKey(session.requestId), session, { ex: ttlSeconds });
 }
 
 export async function getStreamSession(
@@ -246,13 +245,8 @@ export async function getStreamSession(
 ): Promise<StreamSession | null> {
   const r = getRedis();
   if (!r) return null;
-  const raw = await r.get<string>(getStreamSessionKey(requestId));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as StreamSession;
-  } catch {
-    return null;
-  }
+  const session = await r.get<StreamSession>(getStreamSessionKey(requestId));
+  return session ?? null;
 }
 
 export async function deleteStreamSession(requestId: string): Promise<void> {
@@ -281,20 +275,14 @@ function getShareKey(shareId: string): string {
 export async function setShareEntry(entry: ShareEntry, ttlSeconds = 60 * 60 * 24 * 7): Promise<void> {
   const r = getRedis();
   if (!r) return;
-  await r.set(getShareKey(entry.id), JSON.stringify(entry));
-  await r.expire(getShareKey(entry.id), ttlSeconds);
+  await r.set(getShareKey(entry.id), entry, { ex: ttlSeconds });
 }
 
 export async function getShareEntry(shareId: string): Promise<ShareEntry | null> {
   const r = getRedis();
   if (!r) return null;
-  const raw = await r.get<string>(getShareKey(shareId));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as ShareEntry;
-  } catch {
-    return null;
-  }
+  const entry = await r.get<ShareEntry>(getShareKey(shareId));
+  return entry ?? null;
 }
 
 export async function deleteShareEntry(shareId: string): Promise<void> {

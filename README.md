@@ -33,6 +33,7 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 - **On-Demand Indexing** — One-click ingestion of README, issues, PRs, releases, and commits into a vector database
 - **Hybrid Retrieval** — Combines vector similarity + keyword search with query routing and reranking
 - **Conditional Query Rewrite** — Automatically analyzes query risk and retrieval confidence to trigger synonym expansion, query decomposition, or LLM-based reformulation for improved retrieval on vague/complex questions
+- **Shareable Answers** — Save a generated answer and its citations to a short-lived share link
 - **Cited Answers** — AI answers include clickable source citations linking back to GitHub
 - **Q&A History** — Locally cached question history with instant recall (no re-query)
 - **Recent Search** — Locally stored search history for quick re-access
@@ -55,6 +56,7 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 | Drag & Drop | @dnd-kit (core + sortable) |
 | Vector DB | Upstash Vector (serverless, HTTP-based) |
 | Keyword Search | MiniSearch (in-memory BM25-like) |
+| Cache / State | Upstash Redis (rate limits, chunk-count cache, stream sessions, share links) |
 | Deployment | Vercel (with Serverless Functions for OAuth + RAG API) |
 
 ## Getting Started
@@ -88,7 +90,7 @@ cp .env.example .env
 | `OPENAI_API_KEY` | OpenAI API key for embeddings (always required for Ask Repo) |
 | `UPSTASH_VECTOR_REST_URL` | Upstash Vector database REST endpoint |
 | `UPSTASH_VECTOR_REST_TOKEN` | Upstash Vector authentication token |
-| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST endpoint (for rate limiting) |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST endpoint (for rate limiting, chunk-count caching, stream sessions, and share links) |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis authentication token |
 | `LLM_PROVIDER` | LLM provider: `openai` \| `deepseek` \| `groq` \| `gemini` \| `claude` (default: `openai`) |
 | `DEEPSEEK_API_KEY` | DeepSeek API key (required when `LLM_PROVIDER=deepseek`) |
@@ -99,7 +101,7 @@ cp .env.example .env
 | `RAG_DAILY_INGEST_LIMIT` | Max index/re-index operations per user per day (default: `5`) |
 | `ADMIN_GITHUB_USERS` | Comma-separated GitHub usernames with unlimited usage |
 
-> **Note:** The dashboard works without OAuth (limited to 60 req/hr) and without AI keys (the Ask Repo feature will be unavailable). To create an OAuth App, go to [GitHub Developer Settings](https://github.com/settings/developers). For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20).
+> **Note:** The dashboard works without OAuth (limited to 60 req/hr) and without AI keys (the Ask Repo feature will be unavailable). To create an OAuth App, go to [GitHub Developer Settings](https://github.com/settings/developers). For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20). Redis is also required for chunk-count caching, stream resume, and share links.
 
 ### Development
 
@@ -151,6 +153,8 @@ api/
 └── rag/            # RAG serverless endpoints
     ├── ask.ts      # POST — hybrid retrieval + conditional query rewrite + LLM answer generation
     ├── ingest.ts   # POST — fetch GitHub data, chunk, embed, store
+    ├── resume.ts   # POST — resume interrupted SSE answer streams
+    ├── share.ts    # POST — persist a generated answer as a share link
     └── status.ts   # GET  — check if a repo is indexed
 lib/
 └── rag/            # Shared server-side RAG library
@@ -160,19 +164,27 @@ lib/
     ├── auth/       # GitHub token verification & rate limiting
     ├── llm/        # Multi-provider LLM generation (OpenAI / DeepSeek / Groq / Gemini / Claude)
     ├── retrieval/  # Vector search, keyword search, hybrid merge, rerank, query router, conditional query rewrite, result merge
-    ├── storage/    # Upstash Vector upsert / query / delete
+    ├── storage/    # Upstash Vector + Redis storage helpers (chunk counts, stream sessions, share links)
     └── types.ts    # Shared RAG type definitions
 ```
 
 **Dashboard data flow:** GitHub API → `githubFetch` client → transformers → TanStack Query hooks → chart components
 
-**Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → conditional query rewrite (analyze risk + confidence → optional multi-query fan-out) → merge + rerank → LLM → cited answer
+**Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → conditional query rewrite (analyze risk + confidence → optional multi-query fan-out) → merge + rerank → LLM → cited answer → optional share link saved in Redis
+
+**Redis responsibilities:**
+- daily ask / ingest rate limiting
+- repository chunk-count cache for `/api/rag/status`
+- SSE stream session state for `/api/rag/resume`
+- share-link payload storage for `/api/rag/share/:id`
 
 ## SSE and Markdown Implementation Notes
 
 ### SSE streaming
 
 - Stream endpoint: `POST /api/rag/ask` with `{ stream: true }`
+- Resume endpoint: `POST /api/rag/resume` with `{ requestId, lastSeq }`
+- Share endpoint: `POST /api/rag/share` to persist a finished answer and return `/share/:id`
 - Server implementation: `api/rag/ask.ts`
     - Sets `text/event-stream` headers and disables proxy buffering
     - Sends `delta` events, then `sources`, then `[DONE]`
@@ -188,6 +200,13 @@ lib/
     - bold (`**text**`)
     - inline code (`` `code` ``)
     - source tokens (`[Source N]`)
+
+### Share links
+
+- `POST /api/rag/share` stores `{ repo, question, answer, sources }` in Redis and returns a share URL
+- `GET /share/:id` reads the entry back through `api/rag/share/[id].ts`
+- Share entries currently expire after 7 days
+- If Redis is not configured, share-link creation is unavailable
 
 ### Stream interruption handling
 
@@ -225,6 +244,8 @@ This project is designed for **Vercel**:
 │  /api/rag/ask     — answer question │
 │     (SSE streaming + multi-LLM)     │
 │  /api/rag/ingest  — index repo data │
+│  /api/rag/resume  — resume streams  │
+│  /api/rag/share   — save share link │
 │  /api/rag/status  — check index     │
 └──────┬──────────────────┬───────────┘
        │                  │
