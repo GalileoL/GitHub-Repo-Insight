@@ -8,7 +8,13 @@ import {
   buildContextText,
 } from '../../lib/rag/llm/index.js';
 import { verifyGitHubToken, checkRateLimit } from '../../lib/rag/auth/index.js';
-import { countRepoChunks, getStreamSession, setStreamSession, deleteStreamSession } from '../../lib/rag/storage/index.js';
+import {
+  countRepoChunks,
+  getStreamSession,
+  setStreamSessionSnapshot,
+  setStreamSessionProgress,
+  deleteStreamSession,
+} from '../../lib/rag/storage/index.js';
 import {
   ServerMetricsRecorder,
   categorizeError,
@@ -106,34 +112,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
     res.setHeader('X-Request-ID', requestId);
 
-    await setStreamSession({
+    const checkpointSeq = Math.max(0, session.lastSeq ?? 0);
+    const checkpointAnswer = session.partialAnswer ?? '';
+
+    await setStreamSessionSnapshot({
       requestId,
       login: auth.login!,
       repo,
       question,
       createdAt: Date.now(),
-      lastSeq: 0,
-      partialAnswer: session.partialAnswer ?? '',
       contextText,
       contextPrefix: storedContextPrefix,
       sources,
     });
+    await setStreamSessionProgress(requestId, {
+      lastSeq: checkpointSeq,
+      partialAnswer: checkpointAnswer,
+    });
 
     // Send initial meta event for client correlation
-    res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question, resume: true, lastSeq })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question, resume: true, lastSeq: checkpointSeq })}\n\n`);
     metrics.incrementEventCount();
 
     let aborted = false;
     let heartbeatTimer: NodeJS.Timeout | undefined;
     let streamCompleted = false;
-    let answerSoFar = session.partialAnswer ?? '';
+    let answerSoFar = checkpointAnswer;
     const cleanup = () => {
       aborted = true;
     };
     req.on('close', cleanup);
     req.on('error', cleanup);
 
-    let seq = lastSeq;
+    let seq = checkpointSeq;
 
     try {
       const generator = hasSnapshot
@@ -142,9 +153,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             repo,
             contextText,
             storedContextPrefix,
-            session.partialAnswer,
+            checkpointAnswer,
           )
-        : generateAnswerStream(question, repo, chunks, storedContextPrefix, session.partialAnswer);
+        : generateAnswerStream(question, repo, chunks, storedContextPrefix, checkpointAnswer);
 
       const startHeartbeat = () => {
         heartbeatTimer = setInterval(() => {
@@ -161,6 +172,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           metrics.recordError('Stream aborted by client');
           res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream aborted by client' })}\n\n`);
           metrics.incrementEventCount();
+          await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
           break;
         }
 
@@ -169,18 +181,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Update session position every 10 deltas to allow resume
         if (seq % 10 === 0) {
-          await setStreamSession({
-            requestId,
-            login: auth.login!,
-            repo,
-            question,
-            createdAt: Date.now(),
-            lastSeq: seq,
-            partialAnswer: answerSoFar,
-            contextText,
-            contextPrefix: storedContextPrefix,
-            sources,
-          });
+          await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
         }
 
         res.write(`data: ${JSON.stringify({ type: 'delta', seq, content: delta })}\n\n`);
@@ -188,18 +189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!aborted) {
-        await setStreamSession({
-          requestId,
-          login: auth.login!,
-          repo,
-          question,
-          createdAt: Date.now(),
-          lastSeq: seq,
-          partialAnswer: answerSoFar,
-          contextText,
-          contextPrefix: storedContextPrefix,
-          sources,
-        });
+        await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
 
         res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
         metrics.incrementEventCount();
@@ -215,18 +205,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metrics.incrementErrorCount();
 
       // Persist last known seq in case of stream failure
-      await setStreamSession({
-        requestId,
-        login: auth.login!,
-        repo,
-        question,
-        createdAt: Date.now(),
-        lastSeq: seq,
-        partialAnswer: answerSoFar,
-        contextText,
-        contextPrefix: storedContextPrefix,
-        sources,
-      });
+      await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
 
       if (!res.headersSent) {
         res.status(500).json({ error: errorMessage });

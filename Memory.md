@@ -220,7 +220,9 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - `rag:usage:<login>:<YYYY-MM-DD>`: ask quota counter, 48h TTL
 - `rag:ingest:<login>:<YYYY-MM-DD>`: ingest quota counter, 48h TTL
 - `rag:chunk-count:<repo>`: cached indexed chunk count for status/fast-fail checks
-- `rag:stream:<requestId>`: SSE resume session state, 5 min TTL
+- `rag:stream:snapshot:<requestId>`: SSE resume snapshot (repo/question/context/sources), 5 min TTL
+- `rag:stream:progress:<requestId>`: SSE progress checkpoint (lastSeq/partialAnswer), 5 min TTL
+- `rag:stream:<requestId>`: legacy combined session key kept for backwards compatibility
 - `rag:share:<shareId>`: shared answer payload, 7 day TTL
 
 ## 12) Update Checklist (When Editing This Repo)

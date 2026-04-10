@@ -57,6 +57,7 @@ export function useAskRepo(repo: string) {
   const requestIdRef = useRef<string | null>(null);
   const lastSeqRef = useRef<number>(0);
   const isResumingRef = useRef(false);
+  const streamCompletedRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { history, addEntry, updateEntry, clearHistory } = useAskHistory(repo);
@@ -85,6 +86,7 @@ export function useAskRepo(repo: string) {
         setSources(cached.sources);
         setStreamStatus('done');
         setStreamError(null);
+        streamCompletedRef.current = true;
         answerRef.current = cached.answer;
         sourcesRef.current = cached.sources;
         return;
@@ -96,6 +98,7 @@ export function useAskRepo(repo: string) {
       setSources([]);
       setStreamStatus('idle');
       setStreamError(null);
+      streamCompletedRef.current = false;
       answerRef.current = '';
       sourcesRef.current = [];
       
@@ -117,11 +120,7 @@ export function useAskRepo(repo: string) {
               deltaBufferRef.current += delta;
               if (!flushTimerRef.current) {
                 flushTimerRef.current = setTimeout(() => {
-                  const buffered = deltaBufferRef.current;
-                  deltaBufferRef.current = '';
-                  flushTimerRef.current = null;
-                  answerRef.current += buffered;
-                  setStreamingAnswer((prev) => prev + buffered);
+                  flushBufferedDeltas();
                 }, 50);
               }
             },
@@ -139,6 +138,9 @@ export function useAskRepo(repo: string) {
                 setStreamStatus('reconnecting');
                 return;
               }
+              if (status === 'done') {
+                streamCompletedRef.current = true;
+              }
               setStreamStatus(status);
             },
             onMetrics: (metrics) => {
@@ -151,7 +153,7 @@ export function useAskRepo(repo: string) {
         );
         flushBufferedDeltas();
         // Cache the fully streamed answer for quick re-use
-        if (answerRef.current && streamStatus !== 'error') {
+        if (answerRef.current && streamCompletedRef.current) {
           addEntry({
             question,
             answer: answerRef.current,
@@ -226,11 +228,7 @@ export function useAskRepo(repo: string) {
               deltaBufferRef.current += delta;
               if (!flushTimerRef.current) {
                 flushTimerRef.current = setTimeout(() => {
-                  const buffered = deltaBufferRef.current;
-                  deltaBufferRef.current = '';
-                  flushTimerRef.current = null;
-                  answerRef.current += buffered;
-                  setStreamingAnswer((prev) => prev + buffered);
+                  flushBufferedDeltas();
                 }, 50);
               }
             },
@@ -243,6 +241,9 @@ export function useAskRepo(repo: string) {
               setStreamStatus('error');
             },
             onStatus: (status) => {
+              if (status === 'done') {
+                streamCompletedRef.current = true;
+              }
               setStreamStatus(status);
             },
             onMetrics: (metrics) => {
@@ -299,6 +300,7 @@ export function useAskRepo(repo: string) {
     setSources([]);
     setStreamStatus('idle');
     setStreamError(null);
+    streamCompletedRef.current = false;
     answerRef.current = '';
     sourcesRef.current = [];
     requestIdRef.current = null;

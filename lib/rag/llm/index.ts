@@ -115,7 +115,7 @@ export function buildMessagesFromContext(
       { role: 'assistant', content: continuationText },
       {
         role: 'user',
-        content: 'Continue the answer from the exact next character. Do not repeat any previous text.',
+        content: 'Continue from the exact next character without repeating prior text. Keep using the same language as the original question.',
       },
     );
   }

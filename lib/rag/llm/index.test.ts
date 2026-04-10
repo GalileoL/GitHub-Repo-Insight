@@ -41,6 +41,7 @@ describe('buildMessagesFromContext', () => {
     expect(messages[1].content).toContain('analytics prefix');
     expect(messages[1].content).toContain('stored context');
     expect(messages[2]).toEqual({ role: 'assistant', content: 'previous partial answer' });
-    expect(messages[3].content).toContain('Continue the answer from the exact next character');
+    expect(messages[3].content).toContain('Continue from the exact next character');
+    expect(messages[3].content).toContain('same language as the original question');
   });
 });

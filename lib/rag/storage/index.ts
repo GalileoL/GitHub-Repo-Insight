@@ -231,8 +231,33 @@ type StreamSession = {
   sources?: Source[];
 };
 
+type StreamSessionSnapshot = {
+  requestId: string;
+  login: string;
+  repo: string;
+  question: string;
+  createdAt: number; // ms
+  contextText?: string;
+  contextPrefix?: string;
+  sources?: Source[];
+};
+
+type StreamSessionProgress = {
+  lastSeq: number;
+  partialAnswer: string;
+  updatedAt: number;
+};
+
 function getStreamSessionKey(requestId: string): string {
   return `rag:stream:${requestId}`;
+}
+
+function getStreamSessionSnapshotKey(requestId: string): string {
+  return `rag:stream:snapshot:${requestId}`;
+}
+
+function getStreamSessionProgressKey(requestId: string): string {
+  return `rag:stream:progress:${requestId}`;
 }
 
 export async function setStreamSession(
@@ -241,7 +266,53 @@ export async function setStreamSession(
 ): Promise<void> {
   const r = getRedis();
   if (!r) return;
-  await r.set(getStreamSessionKey(session.requestId), session, { ex: ttlSeconds });
+  const snapshot: StreamSessionSnapshot = {
+    requestId: session.requestId,
+    login: session.login,
+    repo: session.repo,
+    question: session.question,
+    createdAt: session.createdAt,
+    contextText: session.contextText,
+    contextPrefix: session.contextPrefix,
+    sources: session.sources,
+  };
+
+  const progress: StreamSessionProgress = {
+    lastSeq: session.lastSeq ?? 0,
+    partialAnswer: session.partialAnswer ?? '',
+    updatedAt: Date.now(),
+  };
+
+  await Promise.all([
+    r.set(getStreamSessionSnapshotKey(session.requestId), snapshot, { ex: ttlSeconds }),
+    r.set(getStreamSessionProgressKey(session.requestId), progress, { ex: ttlSeconds }),
+    // Legacy key kept for backwards compatibility with older deployments.
+    r.set(getStreamSessionKey(session.requestId), session, { ex: ttlSeconds }),
+  ]);
+}
+
+export async function setStreamSessionSnapshot(
+  snapshot: StreamSessionSnapshot,
+  ttlSeconds = 60 * 5,
+): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  await r.set(getStreamSessionSnapshotKey(snapshot.requestId), snapshot, { ex: ttlSeconds });
+}
+
+export async function setStreamSessionProgress(
+  requestId: string,
+  progress: Pick<StreamSessionProgress, 'lastSeq' | 'partialAnswer'>,
+  ttlSeconds = 60 * 5,
+): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  const payload: StreamSessionProgress = {
+    lastSeq: Math.max(0, progress.lastSeq),
+    partialAnswer: progress.partialAnswer,
+    updatedAt: Date.now(),
+  };
+  await r.set(getStreamSessionProgressKey(requestId), payload, { ex: ttlSeconds });
 }
 
 export async function getStreamSession(
@@ -249,14 +320,31 @@ export async function getStreamSession(
 ): Promise<StreamSession | null> {
   const r = getRedis();
   if (!r) return null;
-  const session = await r.get<StreamSession>(getStreamSessionKey(requestId));
-  return session ?? null;
+  const [snapshot, progress] = await Promise.all([
+    r.get<StreamSessionSnapshot>(getStreamSessionSnapshotKey(requestId)),
+    r.get<StreamSessionProgress>(getStreamSessionProgressKey(requestId)),
+  ]);
+
+  if (snapshot) {
+    return {
+      ...snapshot,
+      lastSeq: progress?.lastSeq ?? 0,
+      partialAnswer: progress?.partialAnswer ?? '',
+    };
+  }
+
+  const legacy = await r.get<StreamSession>(getStreamSessionKey(requestId));
+  return legacy ?? null;
 }
 
 export async function deleteStreamSession(requestId: string): Promise<void> {
   const r = getRedis();
   if (!r) return;
-  await r.del(getStreamSessionKey(requestId));
+  await r.del(
+    getStreamSessionKey(requestId),
+    getStreamSessionSnapshotKey(requestId),
+    getStreamSessionProgressKey(requestId),
+  );
 }
 
 // -----------------------------------------------------------------------------
