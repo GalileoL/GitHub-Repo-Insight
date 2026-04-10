@@ -57,9 +57,24 @@ export function useAskRepo(repo: string) {
   const requestIdRef = useRef<string | null>(null);
   const lastSeqRef = useRef<number>(0);
   const isResumingRef = useRef(false);
+  const streamCompletedRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { history, addEntry, updateEntry, clearHistory } = useAskHistory(repo);
+
+  const flushBufferedDeltas = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+
+    if (!deltaBufferRef.current) return;
+
+    const buffered = deltaBufferRef.current;
+    deltaBufferRef.current = '';
+    answerRef.current += buffered;
+    setStreamingAnswer((prev) => prev + buffered);
+  }, []);
 
   const mutation = useMutation<void, Error, string>({
     mutationFn: async (question: string) => {
@@ -71,6 +86,7 @@ export function useAskRepo(repo: string) {
         setSources(cached.sources);
         setStreamStatus('done');
         setStreamError(null);
+        streamCompletedRef.current = true;
         answerRef.current = cached.answer;
         sourcesRef.current = cached.sources;
         return;
@@ -82,6 +98,7 @@ export function useAskRepo(repo: string) {
       setSources([]);
       setStreamStatus('idle');
       setStreamError(null);
+      streamCompletedRef.current = false;
       answerRef.current = '';
       sourcesRef.current = [];
       
@@ -103,11 +120,7 @@ export function useAskRepo(repo: string) {
               deltaBufferRef.current += delta;
               if (!flushTimerRef.current) {
                 flushTimerRef.current = setTimeout(() => {
-                  const buffered = deltaBufferRef.current;
-                  deltaBufferRef.current = '';
-                  flushTimerRef.current = null;
-                  answerRef.current += buffered;
-                  setStreamingAnswer((prev) => prev + buffered);
+                  flushBufferedDeltas();
                 }, 50);
               }
             },
@@ -125,16 +138,22 @@ export function useAskRepo(repo: string) {
                 setStreamStatus('reconnecting');
                 return;
               }
+              if (status === 'done') {
+                streamCompletedRef.current = true;
+              }
               setStreamStatus(status);
             },
             onMetrics: (metrics) => {
               requestIdRef.current = metrics.requestId;
-              lastSeqRef.current = metrics.chunkCount ?? lastSeqRef.current;
+              if (typeof metrics.chunkCount === 'number' && metrics.chunkCount > lastSeqRef.current) {
+                lastSeqRef.current = metrics.chunkCount;
+              }
             },
           },
         );
+        flushBufferedDeltas();
         // Cache the fully streamed answer for quick re-use
-        if (answerRef.current && streamStatus !== 'error') {
+        if (answerRef.current && streamCompletedRef.current) {
           addEntry({
             question,
             answer: answerRef.current,
@@ -144,6 +163,7 @@ export function useAskRepo(repo: string) {
           setCachedAnswer(question, answerRef.current, sourcesRef.current);
         }
       } finally {
+        flushBufferedDeltas();
         abortControllerRef.current = null;
       }
     },
@@ -161,13 +181,17 @@ export function useAskRepo(repo: string) {
       abortControllerRef.current = null;
     }
 
+    flushBufferedDeltas();
+
     isResumingRef.current = false;
     setStreamStatus('cancelled');
-  }, []);
+  }, [flushBufferedDeltas]);
 
   /** Retry streaming the same answer from where it left off (partial recovery) */
   const retry = useCallback(async () => {
     if (!mutation.variables) return;
+
+    flushBufferedDeltas();
 
     // Store the current answer so we can show a diff when retry completes.
     setPreviousAnswer(answerRef.current);
@@ -204,11 +228,7 @@ export function useAskRepo(repo: string) {
               deltaBufferRef.current += delta;
               if (!flushTimerRef.current) {
                 flushTimerRef.current = setTimeout(() => {
-                  const buffered = deltaBufferRef.current;
-                  deltaBufferRef.current = '';
-                  flushTimerRef.current = null;
-                  answerRef.current += buffered;
-                  setStreamingAnswer((prev) => prev + buffered);
+                  flushBufferedDeltas();
                 }, 50);
               }
             },
@@ -221,11 +241,16 @@ export function useAskRepo(repo: string) {
               setStreamStatus('error');
             },
             onStatus: (status) => {
+              if (status === 'done') {
+                streamCompletedRef.current = true;
+              }
               setStreamStatus(status);
             },
             onMetrics: (metrics) => {
               requestIdRef.current = metrics.requestId;
-              lastSeqRef.current = metrics.chunkCount ?? lastSeqRef.current;
+              if (typeof metrics.chunkCount === 'number' && metrics.chunkCount > lastSeqRef.current) {
+                lastSeqRef.current = metrics.chunkCount;
+              }
             },
           });
         } catch (err) {
@@ -256,7 +281,7 @@ export function useAskRepo(repo: string) {
     }
 
     mutation.mutate(mutation.variables);
-  }, [mutation, repo, token]);
+  }, [flushBufferedDeltas, mutation, repo, token]);
 
   /** Show a cached history entry directly without making an API call */
   const showCached = useCallback(
@@ -275,6 +300,7 @@ export function useAskRepo(repo: string) {
     setSources([]);
     setStreamStatus('idle');
     setStreamError(null);
+    streamCompletedRef.current = false;
     answerRef.current = '';
     sourcesRef.current = [];
     requestIdRef.current = null;

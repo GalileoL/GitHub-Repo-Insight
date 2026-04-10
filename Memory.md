@@ -37,7 +37,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - API endpoints:
   - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, streaming/non-streaming answer
   - `api/rag/ingest.ts`: fetch GitHub data, chunk, embed, upsert
-  - `api/rag/resume.ts`: resume interrupted SSE answer streams using Redis session state
+  - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context)
   - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis
   - `api/rag/status.ts`: indexed/chunk count
 - Retrieval:
@@ -115,6 +115,9 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - If detected, aborts upstream LLM stream and sends error event
   - Event format: `{ type: 'delta'|'sources'|'error', content?: string, message?: string, sources?: [] }`
   - Clean termination: `[DONE]` token ends stream
+- Resume side (`api/rag/resume.ts`):
+  - Reuses the Redis checkpoint containing the exact prompt context and partial answer
+  - Continues generation from the stored assistant output instead of re-running retrieval
 - Client side (`src/features/rag/api/rag.ts`):
   - Accepts `AbortSignal` for cancellation
   - Parses events with error handling for fragmented SSE
@@ -171,7 +174,6 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - Enhanced SSE parser for fragmented events
   - Remove timeout concerns
 - ❌ Not yet implemented:
-  - Reconnect protocol (resume from position)
   - Heartbeat events
   - Metrics & monitoring (TTFB, duration, cancel rate)
   - Comprehensive stream interrupt tests
@@ -218,7 +220,9 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - `rag:usage:<login>:<YYYY-MM-DD>`: ask quota counter, 48h TTL
 - `rag:ingest:<login>:<YYYY-MM-DD>`: ingest quota counter, 48h TTL
 - `rag:chunk-count:<repo>`: cached indexed chunk count for status/fast-fail checks
-- `rag:stream:<requestId>`: SSE resume session state, 5 min TTL
+- `rag:stream:snapshot:<requestId>`: SSE resume snapshot (repo/question/context/sources), 5 min TTL
+- `rag:stream:progress:<requestId>`: SSE progress checkpoint (lastSeq/partialAnswer), 5 min TTL
+- `rag:stream:<requestId>`: legacy combined session key kept for backwards compatibility
 - `rag:share:<shareId>`: shared answer payload, 7 day TTL
 
 ## 12) Update Checklist (When Editing This Repo)

@@ -1,9 +1,20 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { classifyQuery } from '../../lib/rag/retrieval/router.js';
 import { hybridSearch } from '../../lib/rag/retrieval/hybrid.js';
-import { generateAnswerStream, buildSources } from '../../lib/rag/llm/index.js';
+import {
+  generateAnswerStream,
+  generateAnswerStreamFromContext,
+  buildSources,
+  buildContextText,
+} from '../../lib/rag/llm/index.js';
 import { verifyGitHubToken, checkRateLimit } from '../../lib/rag/auth/index.js';
-import { countRepoChunks, getStreamSession, setStreamSession, deleteStreamSession } from '../../lib/rag/storage/index.js';
+import {
+  countRepoChunks,
+  getStreamSession,
+  setStreamSessionSnapshot,
+  setStreamSessionProgress,
+  deleteStreamSession,
+} from '../../lib/rag/storage/index.js';
 import {
   ServerMetricsRecorder,
   categorizeError,
@@ -41,6 +52,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const repo = session.repo;
   const question = session.question;
+  const hasSnapshot = typeof session.contextText === 'string' && Array.isArray(session.sources);
+  const storedContextText = session.contextText ?? '';
+  const storedContextPrefix = session.contextPrefix;
+  const storedSources = session.sources ?? [];
 
   try {
     // --- Rate limit ---
@@ -55,31 +70,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(429).json({ error: rateLimit.error });
     }
 
-    // Fast-fail for repos that have not been indexed yet.
-    const chunkCount = await countRepoChunks(repo);
-    if (chunkCount === 0) {
-      return res.status(200).json({
-        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
-        sources: [],
-      });
-    }
+    let chunks = [] as Awaited<ReturnType<typeof hybridSearch>>;
+    let sources = storedSources;
+    let contextText = storedContextText;
 
-    // 1. Classify the query to determine type filter
-    const { typeFilter } = classifyQuery(question);
+    if (!hasSnapshot) {
+      // Fast-fail for repos that have not been indexed yet.
+      const chunkCount = await countRepoChunks(repo);
+      if (chunkCount === 0) {
+        return res.status(200).json({
+          answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+          sources: [],
+        });
+      }
 
-    // 2. Hybrid retrieval
-    const chunks = await hybridSearch(question, repo, 8, typeFilter);
+      // 1. Classify the query to determine type filter
+      const { typeFilter } = classifyQuery(question);
 
-    if (chunks.length === 0) {
-      return res.status(200).json({
-        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
-        sources: [],
-      });
+      // 2. Hybrid retrieval
+      chunks = await hybridSearch(question, repo, 8, typeFilter);
+
+      if (chunks.length === 0) {
+        return res.status(200).json({
+          answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+          sources: [],
+        });
+      }
+
+      sources = buildSources(chunks);
+      contextText = buildContextText(chunks);
     }
 
     // --- Initialize metrics ---
     const metrics = new ServerMetricsRecorder();
-    metrics.setChunkCount(chunks.length);
+    metrics.setChunkCount(hasSnapshot ? storedSources.length : chunks.length);
 
     // --- SSE streaming with heartbeat, request ID, and metrics ---
     res.setHeader('Content-Type', 'text/event-stream');
@@ -88,24 +112,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
     res.setHeader('X-Request-ID', requestId);
 
+    const checkpointSeq = Math.max(0, session.lastSeq ?? 0);
+    const checkpointAnswer = session.partialAnswer ?? '';
+
+    await setStreamSessionSnapshot({
+      requestId,
+      login: auth.login!,
+      repo,
+      question,
+      createdAt: Date.now(),
+      contextText,
+      contextPrefix: storedContextPrefix,
+      sources,
+    });
+    await setStreamSessionProgress(requestId, {
+      lastSeq: checkpointSeq,
+      partialAnswer: checkpointAnswer,
+    });
+
     // Send initial meta event for client correlation
-    res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question, resume: true, lastSeq })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question, resume: true, lastSeq: checkpointSeq })}\n\n`);
     metrics.incrementEventCount();
 
     let aborted = false;
     let heartbeatTimer: NodeJS.Timeout | undefined;
     let streamCompleted = false;
+    let answerSoFar = checkpointAnswer;
     const cleanup = () => {
       aborted = true;
     };
     req.on('close', cleanup);
     req.on('error', cleanup);
 
-    let seq = lastSeq;
+    let seq = checkpointSeq;
 
     try {
-      const sources = buildSources(chunks);
-      const generator = generateAnswerStream(question, repo, chunks);
+      const generator = hasSnapshot
+        ? generateAnswerStreamFromContext(
+            question,
+            repo,
+            contextText,
+            storedContextPrefix,
+            checkpointAnswer,
+          )
+        : generateAnswerStream(question, repo, chunks, storedContextPrefix, checkpointAnswer);
 
       const startHeartbeat = () => {
         heartbeatTimer = setInterval(() => {
@@ -122,21 +172,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           metrics.recordError('Stream aborted by client');
           res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream aborted by client' })}\n\n`);
           metrics.incrementEventCount();
+          await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
           break;
         }
 
         seq += 1;
+        answerSoFar += delta;
 
         // Update session position every 10 deltas to allow resume
         if (seq % 10 === 0) {
-          await setStreamSession({
-            requestId,
-            login: auth.login!,
-            repo,
-            question,
-            createdAt: Date.now(),
-            lastSeq: seq,
-          });
+          await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
         }
 
         res.write(`data: ${JSON.stringify({ type: 'delta', seq, content: delta })}\n\n`);
@@ -144,14 +189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!aborted) {
-        await setStreamSession({
-          requestId,
-          login: auth.login!,
-          repo,
-          question,
-          createdAt: Date.now(),
-          lastSeq: seq,
-        });
+        await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
 
         res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
         metrics.incrementEventCount();
@@ -167,14 +205,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metrics.incrementErrorCount();
 
       // Persist last known seq in case of stream failure
-      await setStreamSession({
-        requestId,
-        login: auth.login!,
-        repo,
-        question,
-        createdAt: Date.now(),
-        lastSeq: seq,
-      });
+      await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
 
       if (!res.headersSent) {
         res.status(500).json({ error: errorMessage });

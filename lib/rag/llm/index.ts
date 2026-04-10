@@ -54,7 +54,7 @@ function getClient(): OpenAI {
   return client;
 }
 
-function buildContext(chunks: ScoredChunk[]): string {
+export function buildContextText(chunks: ScoredChunk[]): string {
   return chunks
     .map((sc, i) => {
       const m = sc.chunk.metadata;
@@ -95,15 +95,61 @@ Rules:
 - Reply in the same language the user used in their question.
 - Today's date is {{TODAY}}.`;
 
-function buildMessages(question: string, repo: string, chunks: ScoredChunk[], contextPrefix?: string) {
-  const context = buildContext(chunks);
+export function buildMessagesFromContext(
+  question: string,
+  repo: string,
+  contextText: string,
+  contextPrefix?: string,
+  continuationText?: string,
+) {
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = SYSTEM_PROMPT.replace('{{TODAY}}', today);
-  const fullContext = contextPrefix ? `${contextPrefix}${context}` : context;
-  return [
+  const fullContext = contextPrefix ? `${contextPrefix}${contextText}` : contextText;
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system' as const, content: systemPrompt },
     { role: 'user' as const, content: `Repository: ${repo}\n\nContext:\n${fullContext}\n\nQuestion: ${question}` },
   ];
+
+  if (continuationText) {
+    messages.push(
+      { role: 'assistant', content: continuationText },
+      {
+        role: 'user',
+        content: 'Continue from the exact next character without repeating prior text. Keep using the same language as the original question.',
+      },
+    );
+  }
+
+  return messages;
+}
+
+function buildMessages(
+  question: string,
+  repo: string,
+  chunks: ScoredChunk[],
+  contextPrefix?: string,
+  continuationText?: string,
+) {
+  const context = buildContextText(chunks);
+  return buildMessagesFromContext(question, repo, context, contextPrefix, continuationText);
+}
+
+async function* generateStreamFromMessages(
+  model: string,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+): AsyncGenerator<string> {
+  const stream = await getClient().chat.completions.create({
+    model,
+    messages,
+    temperature: 0.3,
+    max_tokens: 1000,
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    const content = chunk.choices[0]?.delta?.content;
+    if (content) yield content;
+  }
 }
 
 export async function generateAnswer(
@@ -135,23 +181,26 @@ export async function* generateAnswerStream(
   repo: string,
   chunks: ScoredChunk[],
   contextPrefix?: string,
+  continuationText?: string,
 ): AsyncGenerator<string> {
   const provider = getProvider();
   const model = LLM_CONFIG[provider].model;
-  const messages = buildMessages(question, repo, chunks, contextPrefix);
+  const messages = buildMessages(question, repo, chunks, contextPrefix, continuationText);
+  yield* generateStreamFromMessages(model, messages);
+}
 
-  const stream = await getClient().chat.completions.create({
-    model,
-    messages,
-    temperature: 0.3,
-    max_tokens: 1000,
-    stream: true,
-  });
-
-  for await (const chunk of stream) {
-    const content = chunk.choices[0]?.delta?.content;
-    if (content) yield content;
-  }
+/** Streaming variant that reuses a stored context snapshot rather than re-running retrieval. */
+export async function* generateAnswerStreamFromContext(
+  question: string,
+  repo: string,
+  contextText: string,
+  contextPrefix?: string,
+  continuationText?: string,
+): AsyncGenerator<string> {
+  const provider = getProvider();
+  const model = LLM_CONFIG[provider].model;
+  const messages = buildMessagesFromContext(question, repo, contextText, contextPrefix, continuationText);
+  yield* generateStreamFromMessages(model, messages);
 }
 
 const REWRITE_SYSTEM_PROMPT = `You are a search query rewriting assistant. Given a user's question about a GitHub repository, generate semantically distinct reformulations that will improve search retrieval.

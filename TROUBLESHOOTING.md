@@ -144,55 +144,16 @@ Check the Development Command in the Project Settings or the `dev` script in `pa
 
 ---
 
-## 10. Stop → Retry 显示空红色错误框，不生成新回答
+## 10. Stop → Retry 断流恢复现在使用 Redis checkpoint
 
-**现象：** 在流式生成回答时点击 **Stop**，再点击 **Retry**，界面出现空的红色错误框（无文字），不重新生成回答。浏览器控制台报：
-```
-Failed to load resource: the server responded with /api/rag/resume a status of 404 ()
-```
-
-**原因（双重）：**
-
-1. **Bug A — resume session 不存在时进入 error 状态而非重新请求**
-   - `retry()` 只要 `requestIdRef.current` 有值就走 resume 路径（`/api/rag/resume`）
-   - `resume.ts` 调用 `getStreamSession(requestId)`；如果 Redis 中 session 已过期、被清理或冷启动未找到，返回 404
-   - `performResume` 的 catch 仅识别 `network/timeout/abort` 类错误为可重试，404 不在范围内 → 直接 `setStreamStatus('error')`
-   - 用户停掉的 stream 既没有成功，又卡在 error 状态，无法继续
-
-2. **Bug B — 错误框显示空内容**
-   - `AskRepoPanel` 的错误框条件是 `ask.isError`（`= mutation.isError || streamStatus === 'error'`）
-   - 但显示的文字是 `ask.error?.message`（= `mutation.error.message`，来自 TanStack mutation）
-   - resume 失败设的是 `setStreamError(message)`，不是 mutation error → `ask.error` 为 null → 渲染空框
-
-**解决：**
-
-**`src/features/rag/hooks/useAskRepo.ts`** — `performResume` catch 增加 `sessionGone` 判断：
-```ts
-const sessionGone = /session not found|not found or expired/i.test(message);
-if (sessionGone) {
-  requestIdRef.current = null;
-  setStreamError(null);
-  mutation.mutate(mutation.variables!); // fall back to fresh ask
-} else if (retryable && ...) {
-  ...
-} else {
-  setStreamError(message);
-  setStreamStatus('error');
-}
-```
-
-**`src/features/rag/components/AskRepoPanel.tsx`** — 修复错误框条件与内容：
-```tsx
-{ask.isError && (ask.streamError || ask.error?.message) && (
-  <div className="rounded-xl border border-accent-red/30 bg-accent-red/5 p-4">
-    <p className="text-sm text-accent-red">{ask.streamError ?? ask.error?.message}</p>
-  </div>
-)}
-```
+**现状：** 旧的“resume 只靠 `lastSeq` 重新检索”的逻辑已经替换为 checkpoint 方案。当前会把 `partialAnswer + exact context snapshot + sources` 存到 Redis，`/api/rag/resume` 直接用这个快照继续生成，不再依赖重新跑检索流程。
 
 **涉及文件：**
-- `src/features/rag/hooks/useAskRepo.ts`（`performResume` catch block）
-- `src/features/rag/components/AskRepoPanel.tsx`（error box 条件与显示）
+- `api/rag/ask.ts`
+- `api/rag/resume.ts`
+- `lib/rag/storage/index.ts`
+- `lib/rag/llm/index.ts`
+- `src/features/rag/hooks/useAskRepo.ts`
 
 ---
 
