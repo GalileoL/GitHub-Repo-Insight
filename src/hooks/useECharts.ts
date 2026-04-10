@@ -100,7 +100,7 @@ export function useECharts(option: EChartsOption | null) {
       });
       observerRef.current.observe(node);
     }
-  }, [clearResizeTimer, clearSetOptionTimer, scheduleResize, scheduleSetOption]);
+  }, [clearResizeTimer, clearSetOptionTimer, scheduleResize]);
 
   // Update the chart whenever the option object changes
   useEffect(() => {

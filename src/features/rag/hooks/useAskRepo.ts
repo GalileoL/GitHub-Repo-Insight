@@ -61,6 +61,20 @@ export function useAskRepo(repo: string) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { history, addEntry, updateEntry, clearHistory } = useAskHistory(repo);
 
+  const flushBufferedDeltas = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+
+    if (!deltaBufferRef.current) return;
+
+    const buffered = deltaBufferRef.current;
+    deltaBufferRef.current = '';
+    answerRef.current += buffered;
+    setStreamingAnswer((prev) => prev + buffered);
+  }, []);
+
   const mutation = useMutation<void, Error, string>({
     mutationFn: async (question: string) => {
       // If we've recently asked the same question, return cached answer.
@@ -129,10 +143,13 @@ export function useAskRepo(repo: string) {
             },
             onMetrics: (metrics) => {
               requestIdRef.current = metrics.requestId;
-              lastSeqRef.current = metrics.chunkCount ?? lastSeqRef.current;
+              if (typeof metrics.chunkCount === 'number' && metrics.chunkCount > lastSeqRef.current) {
+                lastSeqRef.current = metrics.chunkCount;
+              }
             },
           },
         );
+        flushBufferedDeltas();
         // Cache the fully streamed answer for quick re-use
         if (answerRef.current && streamStatus !== 'error') {
           addEntry({
@@ -144,6 +161,7 @@ export function useAskRepo(repo: string) {
           setCachedAnswer(question, answerRef.current, sourcesRef.current);
         }
       } finally {
+        flushBufferedDeltas();
         abortControllerRef.current = null;
       }
     },
@@ -161,13 +179,17 @@ export function useAskRepo(repo: string) {
       abortControllerRef.current = null;
     }
 
+    flushBufferedDeltas();
+
     isResumingRef.current = false;
     setStreamStatus('cancelled');
-  }, []);
+  }, [flushBufferedDeltas]);
 
   /** Retry streaming the same answer from where it left off (partial recovery) */
   const retry = useCallback(async () => {
     if (!mutation.variables) return;
+
+    flushBufferedDeltas();
 
     // Store the current answer so we can show a diff when retry completes.
     setPreviousAnswer(answerRef.current);
@@ -225,7 +247,9 @@ export function useAskRepo(repo: string) {
             },
             onMetrics: (metrics) => {
               requestIdRef.current = metrics.requestId;
-              lastSeqRef.current = metrics.chunkCount ?? lastSeqRef.current;
+              if (typeof metrics.chunkCount === 'number' && metrics.chunkCount > lastSeqRef.current) {
+                lastSeqRef.current = metrics.chunkCount;
+              }
             },
           });
         } catch (err) {
@@ -256,7 +280,7 @@ export function useAskRepo(repo: string) {
     }
 
     mutation.mutate(mutation.variables);
-  }, [mutation, repo, token]);
+  }, [flushBufferedDeltas, mutation, repo, token]);
 
   /** Show a cached history entry directly without making an API call */
   const showCached = useCallback(

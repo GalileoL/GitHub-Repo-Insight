@@ -1,7 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { classifyQuery } from '../../lib/rag/retrieval/router.js';
 import { hybridSearch } from '../../lib/rag/retrieval/hybrid.js';
-import { generateAnswerStream, buildSources } from '../../lib/rag/llm/index.js';
+import {
+  generateAnswerStream,
+  generateAnswerStreamFromContext,
+  buildSources,
+  buildContextText,
+} from '../../lib/rag/llm/index.js';
 import { verifyGitHubToken, checkRateLimit } from '../../lib/rag/auth/index.js';
 import { countRepoChunks, getStreamSession, setStreamSession, deleteStreamSession } from '../../lib/rag/storage/index.js';
 import {
@@ -41,6 +46,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const repo = session.repo;
   const question = session.question;
+  const hasSnapshot = typeof session.contextText === 'string' && Array.isArray(session.sources);
+  const storedContextText = session.contextText ?? '';
+  const storedContextPrefix = session.contextPrefix;
+  const storedSources = session.sources ?? [];
 
   try {
     // --- Rate limit ---
@@ -55,31 +64,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(429).json({ error: rateLimit.error });
     }
 
-    // Fast-fail for repos that have not been indexed yet.
-    const chunkCount = await countRepoChunks(repo);
-    if (chunkCount === 0) {
-      return res.status(200).json({
-        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
-        sources: [],
-      });
-    }
+    let chunks = [] as Awaited<ReturnType<typeof hybridSearch>>;
+    let sources = storedSources;
+    let contextText = storedContextText;
 
-    // 1. Classify the query to determine type filter
-    const { typeFilter } = classifyQuery(question);
+    if (!hasSnapshot) {
+      // Fast-fail for repos that have not been indexed yet.
+      const chunkCount = await countRepoChunks(repo);
+      if (chunkCount === 0) {
+        return res.status(200).json({
+          answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+          sources: [],
+        });
+      }
 
-    // 2. Hybrid retrieval
-    const chunks = await hybridSearch(question, repo, 8, typeFilter);
+      // 1. Classify the query to determine type filter
+      const { typeFilter } = classifyQuery(question);
 
-    if (chunks.length === 0) {
-      return res.status(200).json({
-        answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
-        sources: [],
-      });
+      // 2. Hybrid retrieval
+      chunks = await hybridSearch(question, repo, 8, typeFilter);
+
+      if (chunks.length === 0) {
+        return res.status(200).json({
+          answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
+          sources: [],
+        });
+      }
+
+      sources = buildSources(chunks);
+      contextText = buildContextText(chunks);
     }
 
     // --- Initialize metrics ---
     const metrics = new ServerMetricsRecorder();
-    metrics.setChunkCount(chunks.length);
+    metrics.setChunkCount(hasSnapshot ? storedSources.length : chunks.length);
 
     // --- SSE streaming with heartbeat, request ID, and metrics ---
     res.setHeader('Content-Type', 'text/event-stream');
@@ -88,6 +106,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
     res.setHeader('X-Request-ID', requestId);
 
+    await setStreamSession({
+      requestId,
+      login: auth.login!,
+      repo,
+      question,
+      createdAt: Date.now(),
+      lastSeq: 0,
+      partialAnswer: session.partialAnswer ?? '',
+      contextText,
+      contextPrefix: storedContextPrefix,
+      sources,
+    });
+
     // Send initial meta event for client correlation
     res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question, resume: true, lastSeq })}\n\n`);
     metrics.incrementEventCount();
@@ -95,6 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let aborted = false;
     let heartbeatTimer: NodeJS.Timeout | undefined;
     let streamCompleted = false;
+    let answerSoFar = session.partialAnswer ?? '';
     const cleanup = () => {
       aborted = true;
     };
@@ -104,8 +136,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let seq = lastSeq;
 
     try {
-      const sources = buildSources(chunks);
-      const generator = generateAnswerStream(question, repo, chunks);
+      const generator = hasSnapshot
+        ? generateAnswerStreamFromContext(
+            question,
+            repo,
+            contextText,
+            storedContextPrefix,
+            session.partialAnswer,
+          )
+        : generateAnswerStream(question, repo, chunks, storedContextPrefix, session.partialAnswer);
 
       const startHeartbeat = () => {
         heartbeatTimer = setInterval(() => {
@@ -126,6 +165,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         seq += 1;
+        answerSoFar += delta;
 
         // Update session position every 10 deltas to allow resume
         if (seq % 10 === 0) {
@@ -136,6 +176,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             question,
             createdAt: Date.now(),
             lastSeq: seq,
+            partialAnswer: answerSoFar,
+            contextText,
+            contextPrefix: storedContextPrefix,
+            sources,
           });
         }
 
@@ -151,6 +195,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           question,
           createdAt: Date.now(),
           lastSeq: seq,
+          partialAnswer: answerSoFar,
+          contextText,
+          contextPrefix: storedContextPrefix,
+          sources,
         });
 
         res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
@@ -174,6 +222,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         question,
         createdAt: Date.now(),
         lastSeq: seq,
+        partialAnswer: answerSoFar,
+        contextText,
+        contextPrefix: storedContextPrefix,
+        sources,
       });
 
       if (!res.headersSent) {

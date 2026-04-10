@@ -225,6 +225,10 @@ type StreamSession = {
   question: string;
   createdAt: number; // ms
   lastSeq?: number;
+  partialAnswer?: string;
+  contextText?: string;
+  contextPrefix?: string;
+  sources?: Source[];
 };
 
 function getStreamSessionKey(requestId: string): string {
