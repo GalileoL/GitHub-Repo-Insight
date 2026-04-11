@@ -25,6 +25,7 @@ describe('githubApi.getRepoSnapshot', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -87,5 +88,127 @@ describe('githubApi.getRepoSnapshot', () => {
       TypeScript: 1200,
       CSS: 300,
     });
+  });
+
+  it('aggregates contributors from GraphQL commit history', async () => {
+    const fetchMock = vi.fn(async () => {
+      return {
+        ok: true,
+        status: 200,
+        headers: makeHeaders({
+          'x-ratelimit-limit': '5000',
+          'x-ratelimit-remaining': '4999',
+          'x-ratelimit-reset': '1700000000',
+          'x-ratelimit-used': '1',
+        }),
+        json: async () => ({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    nodes: [
+                      {
+                        author: {
+                          name: 'Alice',
+                          user: {
+                            login: 'alice',
+                            avatarUrl: 'https://example.com/a.png',
+                            url: 'https://github.com/alice',
+                          },
+                        },
+                      },
+                      {
+                        author: {
+                          name: 'Alice',
+                          user: {
+                            login: 'alice',
+                            avatarUrl: 'https://example.com/a.png',
+                            url: 'https://github.com/alice',
+                          },
+                        },
+                      },
+                      {
+                        author: {
+                          name: 'Bob',
+                          user: {
+                            login: 'bob',
+                            avatarUrl: 'https://example.com/b.png',
+                            url: 'https://github.com/bob',
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        }),
+      } as Response;
+    });
+
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const contributors = await githubApi.getContributors('owner', 'repo');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(contributors[0]).toMatchObject({
+      login: 'alice',
+      contributions: 2,
+      html_url: 'https://github.com/alice',
+    });
+    expect(contributors[1]).toMatchObject({
+      login: 'bob',
+      contributions: 1,
+    });
+  });
+
+  it('fetches monthly issue/pr counts in one GraphQL request', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));
+
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { query: string; variables: Record<string, string> };
+
+      expect(body.query).toContain('query MonthlyIssuePrCounts');
+      expect(body.query).toContain('issue_');
+      expect(body.query).toContain('pr_');
+      expect(Object.keys(body.variables).length).toBe(6);
+
+      return {
+        ok: true,
+        status: 200,
+        headers: makeHeaders({
+          'x-ratelimit-limit': '5000',
+          'x-ratelimit-remaining': '4999',
+          'x-ratelimit-reset': '1700000000',
+          'x-ratelimit-used': '1',
+        }),
+        json: async () => ({
+          data: {
+            issue_2026_01: { issueCount: 5 },
+            pr_2026_01: { issueCount: 2 },
+            issue_2026_02: { issueCount: 7 },
+            pr_2026_02: { issueCount: 3 },
+            issue_2026_03: { issueCount: 4 },
+            pr_2026_03: { issueCount: 1 },
+          },
+        }),
+      } as Response;
+    });
+
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const counts = await githubApi.getMonthlyIssuePrCounts('owner', 'repo', 3);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(counts).toEqual([
+      { month: '2026-01', issues: 5, pullRequests: 2 },
+      { month: '2026-02', issues: 7, pullRequests: 3 },
+      { month: '2026-03', issues: 4, pullRequests: 1 },
+    ]);
+
+    vi.useRealTimers();
   });
 });

@@ -19,6 +19,12 @@ interface DashboardRepoSnapshot {
   languages: import('../types/github').GitHubLanguages;
 }
 
+interface MonthlyIssuePrCount {
+  month: string;
+  issues: number;
+  pullRequests: number;
+}
+
 const GITHUB_CACHE_PREFIX = 'github-api-cache:';
 
 function getCacheKey(url: string): string {
@@ -210,6 +216,165 @@ async function fetchDashboardRepoSnapshot(owner: string, repo: string): Promise<
   };
 }
 
+async function fetchContributorsFromGraphQL(owner: string, repo: string): Promise<import('../types/github').GitHubContributor[]> {
+  type ContributorsData = {
+    repository: {
+      defaultBranchRef: {
+        target: {
+          history: {
+            nodes: Array<{
+              author: {
+                user: {
+                  login: string;
+                  avatarUrl: string;
+                  url: string;
+                } | null;
+                name: string | null;
+              } | null;
+            } | null>;
+          };
+        } | null;
+      } | null;
+    } | null;
+  };
+
+  const query = `
+    query ContributorsSnapshot($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        defaultBranchRef {
+          target {
+            ... on Commit {
+              history(first: 500) {
+                nodes {
+                  author {
+                    name
+                    user {
+                      login
+                      avatarUrl
+                      url
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const payload = await githubGraphql<ContributorsData>(query, { owner, name: repo });
+  const nodes = payload.repository?.defaultBranchRef?.target?.history?.nodes ?? [];
+
+  const contributions = new Map<string, import('../types/github').GitHubContributor>();
+
+  for (const node of nodes) {
+    const user = node?.author?.user;
+    const fallbackName = node?.author?.name?.trim();
+    const login = user?.login ?? (fallbackName ? `unknown:${fallbackName}` : null);
+    if (!login) continue;
+
+    const current = contributions.get(login);
+    if (current) {
+      current.contributions += 1;
+      continue;
+    }
+
+    contributions.set(login, {
+      login: user?.login ?? fallbackName ?? 'unknown',
+      avatar_url: user?.avatarUrl ?? '',
+      html_url: user?.url ?? `https://github.com/${owner}`,
+      contributions: 1,
+    });
+  }
+
+  return [...contributions.values()]
+    .sort((a, b) => b.contributions - a.contributions)
+    .slice(0, 30);
+}
+
+function buildMonthlyIssuePrGraphqlQuery(
+  monthRanges: Array<{ key: string; start: string; end: string }>,
+): string {
+  const fields: string[] = [];
+
+  for (const month of monthRanges) {
+    const alias = month.key.replace('-', '_');
+    fields.push(`
+      issue_${alias}: search(type: ISSUE, query: $issueQuery_${alias}, first: 1) {
+        issueCount
+      }
+      pr_${alias}: search(type: ISSUE, query: $prQuery_${alias}, first: 1) {
+        issueCount
+      }
+    `);
+  }
+
+  const variableDefs = monthRanges
+    .map((month) => month.key.replace('-', '_'))
+    .flatMap((alias) => [`$issueQuery_${alias}: String!`, `$prQuery_${alias}: String!`])
+    .join(', ');
+
+  return `
+    query MonthlyIssuePrCounts(${variableDefs}) {
+      ${fields.join('\n')}
+    }
+  `;
+}
+
+function buildMonthlyIssuePrVariables(
+  owner: string,
+  repo: string,
+  monthRanges: Array<{ key: string; start: string; end: string }>,
+): Record<string, string> {
+  const vars: Record<string, string> = {};
+
+  for (const month of monthRanges) {
+    const alias = month.key.replace('-', '_');
+    vars[`issueQuery_${alias}`] = `repo:${owner}/${repo} is:issue created:${month.start}..${month.end}`;
+    vars[`prQuery_${alias}`] = `repo:${owner}/${repo} is:pr created:${month.start}..${month.end}`;
+  }
+
+  return vars;
+}
+
+async function fetchMonthlyIssuePrCountsFromGraphQL(
+  owner: string,
+  repo: string,
+  months: number,
+): Promise<MonthlyIssuePrCount[]> {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  const monthRanges = Array.from({ length: months }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    return {
+      key: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`,
+      start: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`,
+      end: `${lastDay.getFullYear()}-${pad(lastDay.getMonth() + 1)}-${pad(lastDay.getDate())}`,
+    };
+  });
+
+  type SearchBucket = { issueCount: number };
+  type ResultShape = Record<string, SearchBucket>;
+
+  const query = buildMonthlyIssuePrGraphqlQuery(monthRanges);
+  const variables = buildMonthlyIssuePrVariables(owner, repo, monthRanges);
+  const payload = await githubGraphql<ResultShape>(query, variables);
+
+  return monthRanges.map((month) => {
+    const alias = month.key.replace('-', '_');
+    const issueBucket = payload[`issue_${alias}`];
+    const prBucket = payload[`pr_${alias}`];
+    return {
+      month: month.key,
+      issues: issueBucket?.issueCount ?? 0,
+      pullRequests: prBucket?.issueCount ?? 0,
+    };
+  });
+}
+
 async function fetchGitHubResponse(url: string, init: RequestInit, cacheable: boolean) {
   const cached = cacheable ? readCachedJson<unknown>(url) : null;
   const headers = {
@@ -360,10 +525,18 @@ export const githubApi = {
   getLanguages: (owner: string, repo: string) =>
     githubFetch<import('../types/github').GitHubLanguages>(`/repos/${owner}/${repo}/languages`),
 
-  getContributors: (owner: string, repo: string) =>
-    githubFetch<import('../types/github').GitHubContributor[]>(`/repos/${owner}/${repo}/contributors`, {
+  getContributors: async (owner: string, repo: string) => {
+    try {
+      const fromGraphql = await fetchContributorsFromGraphQL(owner, repo);
+      if (fromGraphql.length > 0) return fromGraphql;
+    } catch {
+      // Fall through to REST fallback for compatibility.
+    }
+
+    return githubFetch<import('../types/github').GitHubContributor[]>(`/repos/${owner}/${repo}/contributors`, {
       params: { per_page: '30' },
-    }),
+    });
+  },
 
   getCommitActivity: (owner: string, repo: string) =>
     githubFetchWithRetry<import('../types/github').GitHubCommitActivity[]>(`/repos/${owner}/${repo}/stats/commit_activity`),
@@ -383,47 +556,6 @@ export const githubApi = {
       params: { state: 'all', per_page: '100', sort: 'created', direction: 'desc', ...params },
     }),
 
-  getMonthlyIssuePrCounts: async (owner: string, repo: string, months: number = 12) => {
-    type SearchResult = { total_count: number };
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-
-    const monthRanges = Array.from({ length: months }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
-      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      return {
-        key: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`,
-        start: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`,
-        end: `${lastDay.getFullYear()}-${pad(lastDay.getMonth() + 1)}-${pad(lastDay.getDate())}`,
-      };
-    });
-
-    // Fetch 2 months per batch (4 requests) with delays to stay within
-    // the Search API rate limit (30 req/min authenticated, 10 unauthenticated)
-    const batchSize = 2;
-    const allResults: Array<{ month: string; issues: number; pullRequests: number }> = [];
-
-    for (let i = 0; i < monthRanges.length; i += batchSize) {
-      if (i > 0) await new Promise((r) => setTimeout(r, 2500));
-      const batch = monthRanges.slice(i, i + batchSize);
-      const promises = batch.flatMap((m) => [
-        githubFetch<SearchResult>('/search/issues', {
-          params: { q: `repo:${owner}/${repo} is:issue created:${m.start}..${m.end}`, per_page: '1' },
-        }),
-        githubFetch<SearchResult>('/search/issues', {
-          params: { q: `repo:${owner}/${repo} is:pr created:${m.start}..${m.end}`, per_page: '1' },
-        }),
-      ]);
-      const results = await Promise.all(promises);
-      batch.forEach((m, idx) => {
-        allResults.push({
-          month: m.key,
-          issues: results[idx * 2].total_count,
-          pullRequests: results[idx * 2 + 1].total_count,
-        });
-      });
-    }
-
-    return allResults;
-  },
+  getMonthlyIssuePrCounts: (owner: string, repo: string, months: number = 12) =>
+    fetchMonthlyIssuePrCountsFromGraphQL(owner, repo, months),
 };
