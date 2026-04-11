@@ -25,3 +25,12 @@ Before marking any task as complete, every agent must do all of the following in
 
 - This file is the source of truth for workflow behavior.
 - Any agent-specific instruction file must remain consistent with this checklist.
+
+## Branch And PR Workflow
+
+- Never push directly to `main`.
+- Commit changes on the current feature branch.
+- Push the feature branch to `origin`.
+- Wait for CI on that branch to finish and verify success.
+- Open or update a PR from the feature branch to `main`.
+- If automation for PR/CI is unavailable in the runtime (for example, missing GitHub CLI auth), provide the exact commands or URL needed and report the blocker.
