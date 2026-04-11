@@ -136,7 +136,7 @@ For AI-assisted development and onboarding, see:
 
 - `Memory.md` — concise architecture, API contracts, SSE/markdown behavior, and maintenance checklist
 - `AGENTS.md` — canonical AI workflow (risk-based review/test policy + branch/PR flow)
-- Repository memory under `/memories/repo/` — concise operational facts kept in sync after repo scans
+- Runtime repository memory snapshots (when available in the active agent environment) — concise operational facts kept in sync after repo scans
 
 ```
 src/

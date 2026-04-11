@@ -18,8 +18,8 @@ Before marking any task as complete, every agent must do all of the following in
 - After the scan, update project knowledge artifacts when needed:
 	- `README.md` for user-facing architecture/workflow/runtime behavior changes.
 	- `Memory.md` as the canonical in-repo long-form project memory.
-	- Repository memory files under `/memories/repo/` for concise, repository-scoped operational facts.
-	- Keep `/memories/repo/` snapshots consistent with `Memory.md` (condensed operational view, not a conflicting source).
+	- Runtime repository memory files (for example, `/memories/repo/` when available in the agent environment) for concise, repository-scoped operational facts.
+	- Keep runtime repository memory snapshots consistent with `Memory.md` (condensed operational view, not a conflicting source).
 - If no updates are needed after the scan, explicitly state that in the final response.
 
 ## Risk Levels

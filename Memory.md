@@ -333,8 +333,8 @@ Use this checklist whenever architecture/workflow behavior changes.
 ### Canonical-first update order
 1. Update this file (`Memory.md`) first as the canonical long-form memory.
 2. Update `README.md` for user-facing runtime/workflow changes.
-3. Update `/memories/repo/` snapshots as condensed operational facts.
-4. Ensure `/memories/repo/` does not conflict with `Memory.md`.
+3. Update runtime repository memory snapshots (for example, `/memories/repo/` when available in the agent runtime) as condensed operational facts.
+4. Ensure runtime repository memory snapshots do not conflict with `Memory.md`.
 
 ### Minimal sync checklist
 - [ ] Core flows changed? Update sections `3`, `4`, and relevant roadmap/status sections.
@@ -345,4 +345,4 @@ Use this checklist whenever architecture/workflow behavior changes.
 - [ ] Added/removed major modules? Update top-level structure and architecture map.
 
 ### Commit note convention (recommended)
-- Include `memory-sync` in docs commit messages touching `Memory.md` and `/memories/repo/`.
+- Include `memory-sync` in docs commit messages touching `Memory.md` and related memory-sync artifacts.
