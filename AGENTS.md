@@ -31,6 +31,8 @@ Before marking any task as complete, every agent must do all of the following in
 - Never push directly to `main`.
 - Commit changes on the current feature branch.
 - Push the feature branch to `origin`.
-- Wait for CI on that branch to finish and verify success.
 - Open or update a PR from the feature branch to `main`.
+- Wait for CI and verify success using this order:
+	1) If branch CI is configured for the pushed branch, wait for branch CI.
+	2) If branch CI is not configured, wait for PR checks on the feature-branch PR.
 - If automation for PR/CI is unavailable in the runtime (for example, missing GitHub CLI auth), provide the exact commands or URL needed and report the blocker.
