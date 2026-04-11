@@ -22,7 +22,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 ## 3) Main User Flows
 - Repo analytics flow:
   - User enters `owner/repo`
-  - Frontend hooks in `src/hooks/` call GitHub REST APIs
+  - Frontend hooks in `src/hooks/` call GitHub APIs (repo overview + languages use a shared GraphQL snapshot query)
   - Data transformers map API responses to chart-ready shape
   - Chart components render language, commits, contributors, issues/PR trends, releases
 - Ask Repo flow:

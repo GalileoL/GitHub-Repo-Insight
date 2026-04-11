@@ -9,6 +9,16 @@ type CachedJson<T> = {
   data: T;
 };
 
+interface GraphQLResponse<T> {
+  data?: T;
+  errors?: Array<{ message: string }>;
+}
+
+interface DashboardRepoSnapshot {
+  repo: import('../types/github').GitHubRepo;
+  languages: import('../types/github').GitHubLanguages;
+}
+
 const GITHUB_CACHE_PREFIX = 'github-api-cache:';
 
 function getCacheKey(url: string): string {
@@ -50,6 +60,154 @@ function buildGitHubHeaders(token?: string): Record<string, string> {
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
   if (!headers) return {};
   return Object.fromEntries(new Headers(headers).entries());
+}
+
+async function githubGraphql<T>(query: string, variables: Record<string, string>): Promise<T> {
+  const token = useAuthStore.getState().token;
+  const response = await fetch(`${GITHUB_API_BASE}/graphql`, {
+    method: 'POST',
+    headers: {
+      ...buildGitHubHeaders(token ?? undefined),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  updateRateLimit(response.headers);
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = body.message || `GitHub GraphQL error: ${response.status}`;
+    throw new GitHubApiError(response.status, message, response.status === 403 || response.status === 429);
+  }
+
+  const payload = (await response.json()) as GraphQLResponse<T>;
+  if (payload.errors?.length) {
+    throw new GitHubApiError(400, payload.errors[0]?.message || 'GitHub GraphQL query failed');
+  }
+
+  if (!payload.data) {
+    throw new GitHubApiError(500, 'GitHub GraphQL response missing data');
+  }
+
+  return payload.data;
+}
+
+const DASHBOARD_REPO_SNAPSHOT_QUERY = `
+  query DashboardRepoSnapshot($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      databaseId
+      name
+      nameWithOwner
+      description
+      url
+      stargazerCount
+      forkCount
+      watchers {
+        totalCount
+      }
+      issues(states: OPEN) {
+        totalCount
+      }
+      licenseInfo {
+        name
+        spdxId
+      }
+      createdAt
+      updatedAt
+      pushedAt
+      primaryLanguage {
+        name
+      }
+      defaultBranchRef {
+        name
+      }
+      owner {
+        login
+        avatarUrl
+      }
+      languages(first: 100, orderBy: { field: SIZE, direction: DESC }) {
+        edges {
+          size
+          node {
+            name
+          }
+        }
+      }
+    }
+  }
+`;
+
+async function fetchDashboardRepoSnapshot(owner: string, repo: string): Promise<DashboardRepoSnapshot> {
+  type RepoSnapshotData = {
+    repository: {
+      databaseId: number | null;
+      name: string;
+      nameWithOwner: string;
+      description: string | null;
+      url: string;
+      stargazerCount: number;
+      forkCount: number;
+      watchers: { totalCount: number };
+      issues: { totalCount: number };
+      licenseInfo: { name: string; spdxId: string } | null;
+      createdAt: string;
+      updatedAt: string;
+      pushedAt: string;
+      primaryLanguage: { name: string } | null;
+      defaultBranchRef: { name: string } | null;
+      owner: { login: string; avatarUrl: string };
+      languages: {
+        edges: Array<{ size: number; node: { name: string } | null } | null>;
+      };
+    } | null;
+  };
+
+  const payload = await githubGraphql<RepoSnapshotData>(DASHBOARD_REPO_SNAPSHOT_QUERY, {
+    owner,
+    name: repo,
+  });
+
+  const repository = payload.repository;
+  if (!repository) {
+    throw new GitHubApiError(404, `Repository not found: ${owner}/${repo}`);
+  }
+
+  const languages: import('../types/github').GitHubLanguages = {};
+  for (const edge of repository.languages.edges ?? []) {
+    if (!edge?.node?.name) continue;
+    languages[edge.node.name] = edge.size;
+  }
+
+  return {
+    repo: {
+      id: repository.databaseId ?? 0,
+      name: repository.name,
+      full_name: repository.nameWithOwner,
+      description: repository.description,
+      html_url: repository.url,
+      stargazers_count: repository.stargazerCount,
+      forks_count: repository.forkCount,
+      watchers_count: repository.watchers.totalCount,
+      open_issues_count: repository.issues.totalCount,
+      license: repository.licenseInfo
+        ? {
+            name: repository.licenseInfo.name,
+            spdx_id: repository.licenseInfo.spdxId,
+          }
+        : null,
+      created_at: repository.createdAt,
+      updated_at: repository.updatedAt,
+      pushed_at: repository.pushedAt,
+      language: repository.primaryLanguage?.name ?? null,
+      default_branch: repository.defaultBranchRef?.name ?? 'main',
+      owner: {
+        login: repository.owner.login,
+        avatar_url: repository.owner.avatarUrl,
+      },
+    },
+    languages,
+  };
 }
 
 async function fetchGitHubResponse(url: string, init: RequestInit, cacheable: boolean) {
@@ -194,6 +352,8 @@ async function githubFetchWithRetry<T>(
 }
 
 export const githubApi = {
+  getRepoSnapshot: (owner: string, repo: string) => fetchDashboardRepoSnapshot(owner, repo),
+
   getRepo: (owner: string, repo: string) =>
     githubFetch<import('../types/github').GitHubRepo>(`/repos/${owner}/${repo}`),
 
