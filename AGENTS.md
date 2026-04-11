@@ -12,6 +12,16 @@ Before marking any task as complete, every agent must do all of the following in
 4. Run lint (`npm run lint`).
 5. Report risk level, review findings, and test/lint results in the final response.
 
+## Local Pre-Commit Check (Mandatory)
+
+- Before every commit, run the local equivalent of CI job `Check`.
+- Required local commands (same order as CI):
+	1) `npx tsc -b`
+	2) `npm run lint`
+	3) `npm test`
+	4) `npx vite build`
+- If any command fails, do not commit until fixed, or explicitly report the blocker.
+
 ## Project Knowledge Sync
 
 - For `L2`/`L3` changes, or for `L0`/`L1` changes that affect architecture, workflows, API contracts, testing layout, or deployment behavior, run a repository scan before finishing.

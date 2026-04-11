@@ -377,8 +377,9 @@ async function fetchMonthlyIssuePrCountsFromGraphQL(
 
 async function fetchGitHubResponse(url: string, init: RequestInit, cacheable: boolean) {
   const cached = cacheable ? readCachedJson<unknown>(url) : null;
+  const token = useAuthStore.getState().token ?? undefined;
   const headers = {
-    ...buildGitHubHeaders(useAuthStore.getState().token),
+    ...buildGitHubHeaders(token),
     ...normalizeHeaders(init.headers),
     ...(cached?.etag ? { 'If-None-Match': cached.etag } : {}),
   };

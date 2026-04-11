@@ -22,7 +22,9 @@ Keep it up to date when architecture, APIs, or conventions change.
 ## 3) Main User Flows
 - Repo analytics flow:
   - User enters `owner/repo`
-  - Frontend hooks in `src/hooks/` call GitHub APIs (repo overview + languages use a shared GraphQL snapshot query)
+  - Frontend hooks in `src/hooks/` call GitHub APIs (repo overview + languages share one GraphQL snapshot query)
+  - Contributors are aggregated from GraphQL commit history (REST fallback enabled)
+  - Monthly issue/PR trend counts are fetched via one GraphQL aliased search query
   - Data transformers map API responses to chart-ready shape
   - Chart components render language, commits, contributors, issues/PR trends, releases
 - Ask Repo flow:
@@ -54,7 +56,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: GitHub token verify + daily ask/ingest limits in Redis
 - GitHub API client:
-  - `src/api/github.ts`: shared frontend GitHub GET helper with `If-None-Match` conditional caching backed by localStorage
+  - `src/api/github.ts`: shared frontend GitHub client with `If-None-Match` conditional caching for REST GETs, GraphQL dashboard snapshot, GraphQL contributors aggregation (with REST fallback), and GraphQL monthly issue/PR aliased counting
 - Types:
   - `lib/rag/types.ts`: all shared types including 15 query rewrite interfaces
 

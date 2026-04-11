@@ -183,6 +183,7 @@ lib/
 
 **Dashboard data flow:** GitHub API → `githubFetch` client → transformers → TanStack Query hooks → chart components
     - Repo overview + language distribution now share one GraphQL snapshot request (`getRepoSnapshot`) via a shared React Query key.
+    - Top contributors are now aggregated from GraphQL commit history (with REST fallback), and monthly issue/PR counts are fetched via one GraphQL aliased search query.
 
 **Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → conditional query rewrite (analyze risk + confidence → optional multi-query fan-out) → merge + rerank → LLM → cited answer → optional share link saved in Redis
 
