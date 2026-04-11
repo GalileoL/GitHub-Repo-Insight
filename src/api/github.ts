@@ -4,6 +4,72 @@ import type { RateLimit } from '../types/github';
 
 let latestRateLimit: RateLimit | null = null;
 
+type CachedJson<T> = {
+  etag: string;
+  data: T;
+};
+
+const GITHUB_CACHE_PREFIX = 'github-api-cache:';
+
+function getCacheKey(url: string): string {
+  return `${GITHUB_CACHE_PREFIX}${url}`;
+}
+
+function readCachedJson<T>(url: string): CachedJson<T> | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(getCacheKey(url));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<CachedJson<T>>;
+    if (typeof parsed.etag !== 'string' || parsed.etag.length === 0) return null;
+    if (!('data' in parsed)) return null;
+
+    return { etag: parsed.etag, data: parsed.data as T };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedJson<T>(url: string, etag: string | null, data: T): void {
+  if (!etag || !globalThis.localStorage) return;
+
+  try {
+    globalThis.localStorage.setItem(getCacheKey(url), JSON.stringify({ etag, data }));
+  } catch {
+    // Ignore quota and serialization failures.
+  }
+}
+
+function buildGitHubHeaders(token?: string): Record<string, string> {
+  return {
+    Accept: 'application/vnd.github+json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
+  if (!headers) return {};
+  return Object.fromEntries(new Headers(headers).entries());
+}
+
+async function fetchGitHubResponse(url: string, init: RequestInit, cacheable: boolean) {
+  const cached = cacheable ? readCachedJson<unknown>(url) : null;
+  const headers = {
+    ...buildGitHubHeaders(useAuthStore.getState().token),
+    ...normalizeHeaders(init.headers),
+    ...(cached?.etag ? { 'If-None-Match': cached.etag } : {}),
+  };
+
+  const response = await fetch(url, {
+    ...init,
+    headers,
+  });
+
+  updateRateLimit(response.headers);
+
+  return { response, cached };
+}
+
 export function getRateLimit(): RateLimit | null {
   return latestRateLimit;
 }
@@ -40,7 +106,6 @@ export async function githubFetch<T>(
   endpoint: string,
   options?: RequestInit & { params?: Record<string, string> },
 ): Promise<T> {
-  const token = useAuthStore.getState().token;
   const url = new URL(`${GITHUB_API_BASE}${endpoint}`);
 
   const params = options?.params;
@@ -50,17 +115,13 @@ export async function githubFetch<T>(
     });
   }
 
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github.v3+json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  const method = (options?.method ?? 'GET').toUpperCase();
+  const cacheable = method === 'GET';
+  const { response, cached } = await fetchGitHubResponse(url.toString(), options ?? {}, cacheable);
 
-  const response = await fetch(url.toString(), {
-    ...options,
-    headers: { ...headers, ...options?.headers },
-  });
-
-  updateRateLimit(response.headers);
+  if (response.status === 304 && cached) {
+    return cached.data as T;
+  }
 
   if (!response.ok) {
     const isRateLimit = response.status === 403 || response.status === 429;
@@ -72,7 +133,11 @@ export async function githubFetch<T>(
     );
   }
 
-  return response.json();
+  const data = (await response.json()) as T;
+  if (cacheable) {
+    writeCachedJson(url.toString(), response.headers.get('etag'), data);
+  }
+  return data;
 }
 
 /**
@@ -85,7 +150,6 @@ async function githubFetchWithRetry<T>(
   maxRetries: number = 4,
 ): Promise<T> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const token = useAuthStore.getState().token;
     const url = new URL(`${GITHUB_API_BASE}${endpoint}`);
 
     const params = options?.params;
@@ -95,17 +159,11 @@ async function githubFetchWithRetry<T>(
       });
     }
 
-    const headers: Record<string, string> = {
-      Accept: 'application/vnd.github.v3+json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
+    const { response, cached } = await fetchGitHubResponse(url.toString(), options ?? {}, true);
 
-    const response = await fetch(url.toString(), {
-      ...options,
-      headers: { ...headers, ...options?.headers },
-    });
-
-    updateRateLimit(response.headers);
+    if (response.status === 304 && cached) {
+      return cached.data as T;
+    }
 
     if (!response.ok) {
       const isRateLimit = response.status === 403 || response.status === 429;
@@ -127,7 +185,9 @@ async function githubFetchWithRetry<T>(
       return [] as T;
     }
 
-    return response.json();
+    const data = (await response.json()) as T;
+    writeCachedJson(url.toString(), response.headers.get('etag'), data);
+    return data;
   }
 
   return [] as T;

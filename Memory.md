@@ -37,7 +37,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
   - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, streaming/non-streaming answer
-  - `api/rag/ingest.ts`: fetch GitHub data, chunk, embed, upsert
+  - `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk, embed, upsert (REST fallback only when needed)
   - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context)
   - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis
   - `api/rag/status.ts`: indexed/chunk count
@@ -53,6 +53,8 @@ Keep it up to date when architecture, APIs, or conventions change.
   - `lib/rag/storage/index.ts`: Upstash Vector operations + Redis helpers for chunk counts, stream sessions, and share entries
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: GitHub token verify + daily ask/ingest limits in Redis
+- GitHub API client:
+  - `src/api/github.ts`: shared frontend GitHub GET helper with `If-None-Match` conditional caching backed by localStorage
 - Types:
   - `lib/rag/types.ts`: all shared types including 15 query rewrite interfaces
 
@@ -175,6 +177,7 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - Resume endpoint with Redis checkpoint replay
   - Server/client stream metrics and error categorization
   - Deterministic analytics-only SSE excludes resumable session persistence (prevents resume/LLM drift)
+  - Shared GitHub GETs cache `304 Not Modified` responses locally via `If-None-Match`
 - ❌ Not yet implemented:
   - E2E interruption/retry tests with real providers
   - External telemetry sink and dashboards

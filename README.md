@@ -137,10 +137,11 @@ For AI-assisted development and onboarding, see:
 - `Memory.md` — concise architecture, API contracts, SSE/markdown behavior, and maintenance checklist
 - `AGENTS.md` — canonical AI workflow (risk-based review/test policy + branch/PR flow)
 - Runtime repository memory snapshots (when available in the active agent environment) — concise operational facts kept in sync after repo scans
+- GitHub ingestion now uses a GraphQL repository snapshot for README / issues / PRs / releases / commits, while shared GitHub GETs cache `304 Not Modified` responses via `If-None-Match`
 
 ```
 src/
-├── api/            # GitHub API client with auth token injection & rate limiting
+├── api/            # GitHub API client with auth token injection, rate limiting & ETag-backed GET caching
 ├── assets/         # Static assets
 ├── components/
 │   ├── charts/     # ECharts-based visualization components (lazy-loaded)
@@ -172,7 +173,7 @@ lib/
 └── rag/            # Shared server-side RAG library
     ├── chunking/   # Structure-aware chunkers (readme, issues, PRs, releases, commits)
     ├── embeddings/ # OpenAI embedding wrapper
-    ├── github/     # GitHub data fetchers for ingestion
+    ├── github/     # GitHub data fetchers for ingestion (GraphQL snapshot + REST fallback)
     ├── auth/       # GitHub token verification & rate limiting
     ├── llm/        # Multi-provider LLM generation (OpenAI / DeepSeek / Groq / Gemini / Claude)
     ├── retrieval/  # Vector search, keyword search, hybrid merge, rerank, query router, conditional query rewrite, result merge
