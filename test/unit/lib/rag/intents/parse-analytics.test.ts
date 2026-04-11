@@ -52,6 +52,12 @@ describe('parseAnalyticsQuery', () => {
     expect(r?.state).toBe('merged');
   });
 
+  it('keeps commit state as all even if merged wording is present', () => {
+    const r = parseAnalyticsQuery('how many merged commits in Q1 2024');
+    expect(r?.entity).toBe('commit');
+    expect(r?.state).toBe('all');
+  });
+
   // ── Date range: Chinese month range ──
 
   it('parses Chinese month range with year', () => {

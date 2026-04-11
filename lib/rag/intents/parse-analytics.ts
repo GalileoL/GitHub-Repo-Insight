@@ -18,6 +18,8 @@ function extractEntity(q: string): AnalyticsEntity | null {
 // ═══ State Extraction ════════════════════════════════════════
 
 function extractState(q: string, entity: AnalyticsEntity): EntityState {
+  if (entity === 'commit') return 'all';
+
   const lower = q.toLowerCase();
   if (/\bmerged?\b/i.test(q) || /合并/.test(q)) {
     return entity === 'pr' ? 'merged' : 'closed';

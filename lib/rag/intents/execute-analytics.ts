@@ -16,6 +16,7 @@ interface GitHubPRItem {
 interface GitHubIssueItem {
   number: number;
   created_at: string;
+  closed_at: string | null;
   state: string;
   user: { login: string } | null;
   pull_request?: { url: string };
@@ -53,11 +54,15 @@ async function fetchPRs(
     if (batch.length === 0) break;
 
     for (const pr of batch) {
-      if (isBeforeRange(pr.created_at, query.dateRange)) {
+      // For merged PR questions, the user usually means merge time, not creation time.
+      if (query.state === 'merged' && !pr.merged_at) continue;
+
+      const filterDate = query.state === 'merged' ? pr.merged_at : pr.created_at;
+
+      if (query.state !== 'merged' && isBeforeRange(pr.created_at, query.dateRange)) {
         return { items, truncated: false }; // all remaining are older
       }
-      if (!isInRange(pr.created_at, query.dateRange)) continue;
-      if (query.state === 'merged' && !pr.merged_at) continue;
+      if (!filterDate || !isInRange(filterDate, query.dateRange)) continue;
       items.push(pr);
     }
 
@@ -86,10 +91,13 @@ async function fetchIssues(
 
     for (const issue of batch) {
       if (issue.pull_request) continue; // GitHub issues API includes PRs
-      if (isBeforeRange(issue.created_at, query.dateRange)) {
+
+      const filterDate = query.state === 'closed' ? issue.closed_at : issue.created_at;
+
+      if (query.state !== 'closed' && isBeforeRange(issue.created_at, query.dateRange)) {
         return { items, truncated: false };
       }
-      if (!isInRange(issue.created_at, query.dateRange)) continue;
+      if (!filterDate || !isInRange(filterDate, query.dateRange)) continue;
       items.push(issue);
     }
 
@@ -171,6 +179,7 @@ function formatDateRange(range: DateRange | null): string {
 }
 
 function formatState(state: string, entity: AnalyticsEntity): string {
+  if (entity === 'commit') return '';
   if (state === 'all') return '';
   if (state === 'merged' && entity === 'pr') return ' merged';
   return ` ${state}`;
