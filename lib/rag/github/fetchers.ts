@@ -1,6 +1,368 @@
 import type { RawRepoData, RawIssue, RawPull, RawRelease, RawCommit } from '../types.js';
 import { ghFetch, GITHUB_API } from './client.js';
 
+const GITHUB_GRAPHQL_API = `${GITHUB_API}/graphql`;
+
+interface GraphQLResponse<T> {
+  data?: T;
+  errors?: Array<{ message: string }>;
+}
+
+interface GraphQLLabelNode {
+  name: string | null;
+}
+
+interface GraphQLIssueNode {
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  url: string;
+  createdAt: string;
+  author: { login: string | null } | null;
+  labels: { nodes: Array<GraphQLLabelNode | null> | null } | null;
+}
+
+interface GraphQLPullFileNode {
+  path: string | null;
+}
+
+interface GraphQLPullNode {
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  mergedAt: string | null;
+  url: string;
+  createdAt: string;
+  author: { login: string | null } | null;
+  labels: { nodes: Array<GraphQLLabelNode | null> | null } | null;
+  files: { nodes: Array<GraphQLPullFileNode | null> | null } | null;
+}
+
+interface GraphQLReleaseNode {
+  tagName: string;
+  name: string | null;
+  body: string | null;
+  url: string;
+  publishedAt: string;
+  isPrerelease: boolean;
+}
+
+interface GraphQLCommitNode {
+  oid: string;
+  message: string;
+  url: string;
+  committedDate: string;
+  author: { name: string | null; date: string | null } | null;
+}
+
+interface GraphQLRepoSnapshot {
+  repository: {
+    readme: { text: string | null } | null;
+    issuesCreated: { nodes: Array<GraphQLIssueNode | null> | null } | null;
+    issuesUpdated: { nodes: Array<GraphQLIssueNode | null> | null } | null;
+    pullsCreated: { nodes: Array<GraphQLPullNode | null> | null } | null;
+    pullsUpdated: { nodes: Array<GraphQLPullNode | null> | null } | null;
+    releases: { nodes: Array<GraphQLReleaseNode | null> | null } | null;
+    defaultBranchRef: {
+      target: {
+        history: { nodes: Array<GraphQLCommitNode | null> | null } | null;
+      } | null;
+    } | null;
+  } | null;
+}
+
+const GRAPHQL_REPO_SNAPSHOT_QUERY = `
+  query RepoSnapshot($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      readme: object(expression: "HEAD:README.md") {
+        ... on Blob {
+          text
+        }
+      }
+      issuesCreated: issues(first: 100, states: [OPEN, CLOSED], orderBy: { field: CREATED_AT, direction: DESC }) {
+        nodes {
+          number
+          title
+          body
+          state
+          url
+          createdAt
+          author {
+            login
+          }
+          labels(first: 20) {
+            nodes {
+              name
+            }
+          }
+        }
+      }
+      issuesUpdated: issues(first: 100, states: [OPEN, CLOSED], orderBy: { field: UPDATED_AT, direction: DESC }) {
+        nodes {
+          number
+          title
+          body
+          state
+          url
+          createdAt
+          author {
+            login
+          }
+          labels(first: 20) {
+            nodes {
+              name
+            }
+          }
+        }
+      }
+      pullsCreated: pullRequests(first: 100, states: [OPEN, CLOSED, MERGED], orderBy: { field: CREATED_AT, direction: DESC }) {
+        nodes {
+          number
+          title
+          body
+          state
+          mergedAt
+          url
+          createdAt
+          author {
+            login
+          }
+          labels(first: 20) {
+            nodes {
+              name
+            }
+          }
+          files(first: 30) {
+            nodes {
+              path
+            }
+          }
+        }
+      }
+      pullsUpdated: pullRequests(first: 100, states: [OPEN, CLOSED, MERGED], orderBy: { field: UPDATED_AT, direction: DESC }) {
+        nodes {
+          number
+          title
+          body
+          state
+          mergedAt
+          url
+          createdAt
+          author {
+            login
+          }
+          labels(first: 20) {
+            nodes {
+              name
+            }
+          }
+          files(first: 30) {
+            nodes {
+              path
+            }
+          }
+        }
+      }
+      releases(first: 20, orderBy: { field: CREATED_AT, direction: DESC }) {
+        nodes {
+          tagName
+          name
+          body
+          url
+          publishedAt
+          isPrerelease
+        }
+      }
+      defaultBranchRef {
+        target {
+          ... on Commit {
+            history(first: 100) {
+              nodes {
+                oid
+                message
+                url
+                committedDate
+                author {
+                  name
+                  date
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+async function githubGraphql<T>(query: string, variables: Record<string, string>, token?: string): Promise<T> {
+  const response = await fetch(GITHUB_GRAPHQL_API, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!response.ok) {
+    let message = `GitHub GraphQL error ${response.status}`;
+    try {
+      const body = (await response.json()) as { message?: string; errors?: Array<{ message: string }> };
+      message = body.errors?.[0]?.message ?? body.message ?? message;
+    } catch {
+      // ignore JSON parse failures and fall back to the status-based message
+    }
+    throw new Error(message);
+  }
+
+  const payload = (await response.json()) as GraphQLResponse<T>;
+  if (payload.errors?.length) {
+    throw new Error(payload.errors[0]?.message ?? 'GitHub GraphQL error');
+  }
+
+  if (!payload.data) {
+    throw new Error('GitHub GraphQL response missing data');
+  }
+
+  return payload.data;
+}
+
+function collectNodes<T>(nodes: Array<T | null> | null | undefined): T[] {
+  return nodes?.filter((node): node is T => Boolean(node)) ?? [];
+}
+
+function collectLabels(nodeLabels: { nodes: Array<GraphQLLabelNode | null> | null } | null | undefined): Array<{ name: string }> {
+  return collectNodes(nodeLabels?.nodes)
+    .map((label) => label.name)
+    .filter((name): name is string => Boolean(name))
+    .map((name) => ({ name }));
+}
+
+function mapIssueNode(node: GraphQLIssueNode): RawIssue {
+  return {
+    number: node.number,
+    title: node.title,
+    body: node.body,
+    state: node.state.toLowerCase(),
+    html_url: node.url,
+    created_at: node.createdAt,
+    user: node.author?.login ?? null,
+    labels: collectLabels(node.labels),
+  };
+}
+
+function mapPullNode(node: GraphQLPullNode): RawPull {
+  return {
+    number: node.number,
+    title: node.title,
+    body: node.body,
+    state: node.state.toLowerCase(),
+    merged_at: node.mergedAt,
+    html_url: node.url,
+    created_at: node.createdAt,
+    user: node.author?.login ?? null,
+    labels: collectLabels(node.labels),
+    changedFiles: collectNodes(node.files?.nodes)
+      .map((file) => file.path)
+      .filter((path): path is string => Boolean(path)),
+  };
+}
+
+function mapReleaseNode(node: GraphQLReleaseNode): RawRelease {
+  return {
+    tag_name: node.tagName,
+    name: node.name,
+    body: node.body,
+    html_url: node.url,
+    published_at: node.publishedAt,
+    prerelease: node.isPrerelease,
+  };
+}
+
+function mapCommitNode(node: GraphQLCommitNode): RawCommit {
+  return {
+    sha: node.oid,
+    message: node.message,
+    html_url: node.url,
+    date: node.committedDate,
+    author: node.author?.name ?? null,
+  };
+}
+
+function dedupeByNumber<T extends { number: number }>(items: T[]): T[] {
+  const seen = new Map<number, T>();
+  for (const item of items) {
+    if (!seen.has(item.number)) {
+      seen.set(item.number, item);
+    }
+  }
+  return [...seen.values()];
+}
+
+function mergePulls(items: RawPull[]): RawPull[] {
+  const merged = new Map<number, RawPull>();
+
+  for (const item of items) {
+    const existing = merged.get(item.number);
+    if (!existing) {
+      merged.set(item.number, item);
+      continue;
+    }
+
+    const changedFiles = new Set([...(existing.changedFiles ?? []), ...(item.changedFiles ?? [])]);
+    merged.set(item.number, {
+      ...existing,
+      changedFiles: changedFiles.size > 0 ? [...changedFiles] : undefined,
+    });
+  }
+
+  return [...merged.values()];
+}
+
+function parseRepo(repo: string): { owner: string; name: string } {
+  const parts = repo.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(`Invalid repo format: ${repo}`);
+  }
+  return { owner: parts[0], name: parts[1] };
+}
+
+async function fetchRepoDataWithGraphQL(repo: string, token?: string): Promise<RawRepoData> {
+  const { owner, name } = parseRepo(repo);
+
+  const snapshot = await githubGraphql<GraphQLRepoSnapshot>(GRAPHQL_REPO_SNAPSHOT_QUERY, { owner, name }, token);
+  const repository = snapshot.repository;
+
+  if (!repository) {
+    throw new Error(`Repository not found: ${repo}`);
+  }
+
+  const issues = dedupeByNumber([
+    ...collectNodes(repository.issuesUpdated?.nodes).map(mapIssueNode),
+    ...collectNodes(repository.issuesCreated?.nodes).map(mapIssueNode),
+  ]);
+
+  const pulls = mergePulls([
+    ...collectNodes(repository.pullsCreated?.nodes).map(mapPullNode),
+    ...collectNodes(repository.pullsUpdated?.nodes).map(mapPullNode),
+  ]);
+
+  const releases = collectNodes(repository.releases?.nodes).map(mapReleaseNode);
+  const commits = collectNodes(repository.defaultBranchRef?.target?.history?.nodes).map(mapCommitNode);
+
+  return {
+    readme: repository.readme?.text ?? null,
+    issues,
+    pulls,
+    releases,
+    commits,
+  };
+}
+
 async function fetchReadme(repo: string, token?: string): Promise<string | null> {
   try {
     const res = await fetch(`${GITHUB_API}/repos/${repo}/readme`, {
@@ -185,13 +547,19 @@ export async function fetchRepoData(
   repo: string,
   token?: string,
 ): Promise<RawRepoData> {
-  const [readme, issues, pulls, releases, commits] = await Promise.all([
-    fetchReadme(repo, token),
-    fetchIssues(repo, token),
-    fetchPulls(repo, token),
-    fetchReleases(repo, token),
-    fetchCommits(repo, token),
-  ]);
+  parseRepo(repo);
 
-  return { readme, issues, pulls, releases, commits };
+  try {
+    return await fetchRepoDataWithGraphQL(repo, token);
+  } catch {
+    const [readme, issues, pulls, releases, commits] = await Promise.all([
+      fetchReadme(repo, token),
+      fetchIssues(repo, token),
+      fetchPulls(repo, token),
+      fetchReleases(repo, token),
+      fetchCommits(repo, token),
+    ]);
+
+    return { readme, issues, pulls, releases, commits };
+  }
 }

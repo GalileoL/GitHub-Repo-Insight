@@ -74,10 +74,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Compute exact analytics data when needed ──
     let analyticsContext = '';
+    let analyticsAnswer: string | null = null;
     if (needsAnalytics) {
       try {
         const analyticsResult = await executeAnalyticsQuery(repo, intentResult.analyticsQuery!, token);
         const { data } = analyticsResult;
+        analyticsAnswer = analyticsResult.answer;
         // Build structured context for the LLM — exact facts, not prose
         const lines = [
           `[Verified data from GitHub API — these numbers are exact, do NOT approximate or hedge]`,
@@ -107,82 +109,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // ── For pure analytics with successful data, skip RAG but still use LLM ──
-    if (intentResult.intent === 'repo_analytics' && analyticsContext) {
-      // No RAG retrieval needed — LLM formats the exact data into a natural answer
-      const chunks: ScoredChunk[] = [];
+    // ── For pure analytics with successful data, skip retrieval and return deterministic output ──
+    if (intentResult.intent === 'repo_analytics' && analyticsAnswer) {
+      // Pure analytics can return deterministic output directly.
       const sources: ReturnType<typeof buildSources> = [];
-      const contextText = '';
 
       const wantStream = req.body?.stream === true;
       if (wantStream) {
         const metrics = new ServerMetricsRecorder();
         const requestId = metrics.getRequestId();
         metrics.setChunkCount(0);
-        let answerSoFar = '';
 
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('X-Request-ID', requestId);
-
-        await setStreamSessionSnapshot({
-          requestId,
-          login: auth.login!,
-          repo,
-          question,
-          createdAt: Date.now(),
-          contextText,
-          contextPrefix: analyticsContext,
-          sources,
-        });
-        await setStreamSessionProgress(requestId, { lastSeq: 0, partialAnswer: '' });
-
-        res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question })}\n\n`);
 
         let aborted = false;
         const cleanup = () => { aborted = true; };
         req.on('close', cleanup);
         req.on('error', cleanup);
 
-        let seq = 0;
         try {
-          const generator = generateAnswerStream(question, repo, chunks, analyticsContext);
-          for await (const delta of generator) {
-            if (aborted) {
-              await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
-              break;
-            }
-            seq += 1;
-            answerSoFar += delta;
-            if (seq % 10 === 0) {
-              await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
-            }
-            res.write(`data: ${JSON.stringify({ type: 'delta', seq, content: delta })}\n\n`);
-          }
-          if (!aborted) {
-            await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
-            res.write(`data: ${JSON.stringify({ type: 'sources', sources: [] })}\n\n`);
+          if (!aborted && res.writable) {
+            res.write(`data: ${JSON.stringify({ type: 'meta', requestId, repo, question })}\n\n`);
+            metrics.incrementEventCount();
+            res.write(`data: ${JSON.stringify({ type: 'delta', seq: 1, content: analyticsAnswer })}\n\n`);
+            metrics.incrementEventCount();
+            res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
+            metrics.incrementEventCount();
             res.write(`data: [DONE]\n\n`);
+            metrics.incrementEventCount();
           }
         } catch (streamErr) {
-          await setStreamSessionProgress(requestId, { lastSeq: seq, partialAnswer: answerSoFar });
-          const msg = streamErr instanceof Error ? streamErr.message : 'Stream error';
+          const errorMessage = streamErr instanceof Error ? streamErr.message : 'Stream error';
+          const errorToRecord = streamErr instanceof Error ? streamErr : new Error(errorMessage);
+          metrics.recordError(errorToRecord, categorizeError(errorToRecord));
+          metrics.incrementErrorCount();
+
           if (res.writable) {
-            res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'error', message: errorMessage })}\n\n`);
+            metrics.incrementEventCount();
           }
         } finally {
           req.removeListener('close', cleanup);
           req.removeListener('error', cleanup);
+
           logStreamMetrics(`[ask.ts analytics-stream] ${repo}`, metrics.end());
           res.end();
         }
         return;
       }
 
-      const result = await generateAnswer(question, repo, chunks, analyticsContext);
-      return res.status(200).json(result);
+      return res.status(200).json({ answer: analyticsAnswer, sources });
     }
 
     // Fast-fail for repos that have not been indexed yet.

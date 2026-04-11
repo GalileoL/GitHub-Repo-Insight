@@ -6,8 +6,8 @@ import {
   generateCandidates,
   analyzeAndRewrite,
   DEFAULT_THRESHOLDS,
-} from './rewrite.js';
-import type { ScoredChunk, Chunk } from '../types.js';
+} from '../../../../../lib/rag/retrieval/rewrite.js';
+import type { ScoredChunk, Chunk } from '../../../../../lib/rag/types.js';
 
 describe('analyzeQuery', () => {
   describe('anchor extraction', () => {

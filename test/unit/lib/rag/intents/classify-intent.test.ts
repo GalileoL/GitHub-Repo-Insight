@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyIntent } from './classify-intent.js';
+import { classifyIntent } from '../../../../../lib/rag/intents/classify-intent.js';
 
 describe('classifyIntent', () => {
   // ── repo_analytics ──

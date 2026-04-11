@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAnalyticsQuery } from './parse-analytics.js';
+import { parseAnalyticsQuery } from '../../../../../lib/rag/intents/parse-analytics.js';
 
 describe('parseAnalyticsQuery', () => {
   // ── Entity detection ──
@@ -50,6 +50,12 @@ describe('parseAnalyticsQuery', () => {
   it('extracts merged state from Chinese', () => {
     const r = parseAnalyticsQuery('合并了多少PR');
     expect(r?.state).toBe('merged');
+  });
+
+  it('keeps commit state as all even if merged wording is present', () => {
+    const r = parseAnalyticsQuery('how many merged commits in Q1 2024');
+    expect(r?.entity).toBe('commit');
+    expect(r?.state).toBe('all');
   });
 
   // ── Date range: Chinese month range ──

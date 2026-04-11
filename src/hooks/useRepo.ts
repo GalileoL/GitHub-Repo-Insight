@@ -3,8 +3,9 @@ import { githubApi } from '../api/github';
 
 export function useRepo(owner: string, repo: string) {
   return useQuery({
-    queryKey: ['repo', owner, repo],
-    queryFn: () => githubApi.getRepo(owner, repo),
+    queryKey: ['repoSnapshot', owner, repo],
+    queryFn: () => githubApi.getRepoSnapshot(owner, repo),
+    select: (snapshot) => snapshot.repo,
     enabled: !!owner && !!repo,
   });
 }

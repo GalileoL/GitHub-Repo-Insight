@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { askRepoStream, categorizeError, ClientMetricsRecorder, ErrorCategory } from './rag';
+import { askRepoStream, categorizeError, ClientMetricsRecorder, ErrorCategory } from '../../../../../../src/features/rag/api/rag';
 
 function createReadableStreamFromStrings(strings: string[]) {
   const encoder = new TextEncoder();

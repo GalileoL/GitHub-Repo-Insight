@@ -118,6 +118,16 @@ npm run build
 npm run preview
 ```
 
+### Testing & Quality
+
+```bash
+npm test
+npm run lint
+```
+
+- Tests are organized under `test/` with `test/unit/` and `test/integration/`.
+- CI in `.github/workflows/ci.yml` runs type-check, lint, test, and build on PRs to `main` and pushes to `main`.
+
 ## Project Architecture
 
 ## AI Project Memory
@@ -125,10 +135,13 @@ npm run preview
 For AI-assisted development and onboarding, see:
 
 - `Memory.md` — concise architecture, API contracts, SSE/markdown behavior, and maintenance checklist
+- `AGENTS.md` — canonical AI workflow (risk-based review/test policy + branch/PR flow)
+- Runtime repository memory snapshots (when available in the active agent environment) — concise operational facts kept in sync after repo scans
+- GitHub ingestion now uses a GraphQL repository snapshot for README / issues / PRs / releases / commits, while shared GitHub GETs cache `304 Not Modified` responses via `If-None-Match`
 
 ```
 src/
-├── api/            # GitHub API client with auth token injection & rate limiting
+├── api/            # GitHub API client with auth token injection, rate limiting & ETag-backed GET caching
 ├── assets/         # Static assets
 ├── components/
 │   ├── charts/     # ECharts-based visualization components (lazy-loaded)
@@ -160,7 +173,7 @@ lib/
 └── rag/            # Shared server-side RAG library
     ├── chunking/   # Structure-aware chunkers (readme, issues, PRs, releases, commits)
     ├── embeddings/ # OpenAI embedding wrapper
-    ├── github/     # GitHub data fetchers for ingestion
+    ├── github/     # GitHub data fetchers for ingestion (GraphQL snapshot + REST fallback)
     ├── auth/       # GitHub token verification & rate limiting
     ├── llm/        # Multi-provider LLM generation (OpenAI / DeepSeek / Groq / Gemini / Claude)
     ├── retrieval/  # Vector search, keyword search, hybrid merge, rerank, query router, conditional query rewrite, result merge
@@ -169,6 +182,8 @@ lib/
 ```
 
 **Dashboard data flow:** GitHub API → `githubFetch` client → transformers → TanStack Query hooks → chart components
+    - Repo overview + language distribution now share one GraphQL snapshot request (`getRepoSnapshot`) via a shared React Query key.
+    - Top contributors are now aggregated from GraphQL commit history (with REST fallback), and monthly issue/PR counts are fetched via one GraphQL aliased search query.
 
 **Ask Repo data flow:** Question → auth + rate limit → query router → hybrid retrieval (vector + keyword) → conditional query rewrite (analyze risk + confidence → optional multi-query fan-out) → merge + rerank → LLM → cited answer → optional share link saved in Redis
 
@@ -216,10 +231,11 @@ lib/
     - Unified error event protocol; partial answers preserved on cancel
     - `useAskRepo` exports: `cancel()`, `retry()`, `streamStatus`, `streamError`
     - UI improvements: status indicators, stop/retry buttons, error boundary
-- 🔄 **Phase 2 (planned)** — Reconnect protocol & observability:
-    - Heartbeat events to prevent proxy timeout
-    - Resume/partial-continue stream from last received position
-    - Metrics: TTFB, stream duration, cancel rate, failure distribution
+- ✅ **Phase 2 (implemented) — Resume + observability improvements**:
+    - Resume endpoint (`/api/rag/resume`) continues streams from Redis checkpoints
+    - Heartbeat events are emitted to reduce proxy timeout risk
+    - Request IDs and stream metrics are logged for tracing
+    - Analytics-only deterministic SSE responses are excluded from resumable session persistence to prevent resume/LLM drift
 
 ## Deployment
 
