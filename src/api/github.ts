@@ -7,6 +7,7 @@ let latestRateLimit: RateLimit | null = null;
 type CachedJson<T> = {
   etag: string;
   data: T;
+  ts: number;
 };
 
 interface GraphQLResponse<T> {
@@ -26,6 +27,8 @@ interface MonthlyIssuePrCount {
 }
 
 const GITHUB_CACHE_PREFIX = 'github-api-cache:';
+const GITHUB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const GITHUB_CACHE_MAX_ENTRIES = 120;
 
 function getCacheKey(url: string): string {
   return `${GITHUB_CACHE_PREFIX}${url}`;
@@ -38,19 +41,57 @@ function readCachedJson<T>(url: string): CachedJson<T> | null {
 
     const parsed = JSON.parse(raw) as Partial<CachedJson<T>>;
     if (typeof parsed.etag !== 'string' || parsed.etag.length === 0) return null;
+    if (typeof parsed.ts !== 'number' || !Number.isFinite(parsed.ts)) return null;
+    if (Date.now() - parsed.ts > GITHUB_CACHE_TTL_MS) {
+      globalThis.localStorage?.removeItem(getCacheKey(url));
+      return null;
+    }
     if (!('data' in parsed)) return null;
 
-    return { etag: parsed.etag, data: parsed.data as T };
+    return { etag: parsed.etag, data: parsed.data as T, ts: parsed.ts };
   } catch {
     return null;
   }
+}
+
+function pruneGithubCache(): void {
+  if (!globalThis.localStorage) return;
+
+  const entries: Array<{ key: string; ts: number }> = [];
+  for (let i = 0; i < globalThis.localStorage.length; i++) {
+    const key = globalThis.localStorage.key(i);
+    if (!key || !key.startsWith(GITHUB_CACHE_PREFIX)) continue;
+
+    try {
+      const raw = globalThis.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as Partial<CachedJson<unknown>>;
+      const ts = typeof parsed.ts === 'number' && Number.isFinite(parsed.ts) ? parsed.ts : 0;
+
+      if (Date.now() - ts > GITHUB_CACHE_TTL_MS) {
+        globalThis.localStorage.removeItem(key);
+        continue;
+      }
+
+      entries.push({ key, ts });
+    } catch {
+      globalThis.localStorage.removeItem(key);
+    }
+  }
+
+  if (entries.length <= GITHUB_CACHE_MAX_ENTRIES) return;
+  entries
+    .sort((a, b) => a.ts - b.ts)
+    .slice(0, entries.length - GITHUB_CACHE_MAX_ENTRIES)
+    .forEach((entry) => globalThis.localStorage?.removeItem(entry.key));
 }
 
 function writeCachedJson<T>(url: string, etag: string | null, data: T): void {
   if (!etag || !globalThis.localStorage) return;
 
   try {
-    globalThis.localStorage.setItem(getCacheKey(url), JSON.stringify({ etag, data }));
+    globalThis.localStorage.setItem(getCacheKey(url), JSON.stringify({ etag, data, ts: Date.now() }));
+    pruneGithubCache();
   } catch {
     // Ignore quota and serialization failures.
   }
@@ -283,7 +324,7 @@ async function fetchContributorsFromGraphQL(owner: string, repo: string): Promis
     contributions.set(login, {
       login: user?.login ?? fallbackName ?? 'unknown',
       avatar_url: user?.avatarUrl ?? '',
-      html_url: user?.url ?? `https://github.com/${owner}`,
+      html_url: user?.url ?? '',
       contributions: 1,
     });
   }

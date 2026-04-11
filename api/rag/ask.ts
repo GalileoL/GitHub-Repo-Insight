@@ -124,7 +124,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('X-Request-ID', requestId);
 
         let aborted = false;
         const cleanup = () => { aborted = true; };

@@ -130,6 +130,12 @@ describe('githubApi.getRepoSnapshot', () => {
                       },
                       {
                         author: {
+                          name: 'NoUser',
+                          user: null,
+                        },
+                      },
+                      {
+                        author: {
                           name: 'Bob',
                           user: {
                             login: 'bob',
@@ -153,15 +159,24 @@ describe('githubApi.getRepoSnapshot', () => {
     const contributors = await githubApi.getContributors('owner', 'repo');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(contributors[0]).toMatchObject({
-      login: 'alice',
-      contributions: 2,
-      html_url: 'https://github.com/alice',
-    });
-    expect(contributors[1]).toMatchObject({
-      login: 'bob',
-      contributions: 1,
-    });
+    expect(contributors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          login: 'alice',
+          contributions: 2,
+          html_url: 'https://github.com/alice',
+        }),
+        expect.objectContaining({
+          login: 'bob',
+          contributions: 1,
+        }),
+        expect.objectContaining({
+          login: 'NoUser',
+          html_url: '',
+          contributions: 1,
+        }),
+      ]),
+    );
   });
 
   it('fetches monthly issue/pr counts in one GraphQL request', async () => {

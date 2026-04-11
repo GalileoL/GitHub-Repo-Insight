@@ -156,4 +156,14 @@ describe('fetchRepoData', () => {
     expect(result.releases).toHaveLength(1);
     expect(result.commits).toHaveLength(1);
   });
+
+  it('rejects invalid repo format with extra segments', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await expect(fetchRepoData('owner/repo/extra', 'token-123')).rejects.toThrow(
+      'Invalid repo format: owner/repo/extra',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

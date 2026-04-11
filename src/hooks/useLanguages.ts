@@ -5,10 +5,8 @@ import { transformLanguages } from '../utils/transformers';
 export function useLanguages(owner: string, repo: string) {
   return useQuery({
     queryKey: ['repoSnapshot', owner, repo],
-    queryFn: async () => {
-      const snapshot = await githubApi.getRepoSnapshot(owner, repo);
-      return transformLanguages(snapshot.languages);
-    },
+    queryFn: () => githubApi.getRepoSnapshot(owner, repo),
+    select: (snapshot) => transformLanguages(snapshot.languages),
     enabled: !!owner && !!repo,
   });
 }

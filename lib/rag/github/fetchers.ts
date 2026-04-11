@@ -323,11 +323,16 @@ function mergePulls(items: RawPull[]): RawPull[] {
   return [...merged.values()];
 }
 
-async function fetchRepoDataWithGraphQL(repo: string, token?: string): Promise<RawRepoData> {
-  const [owner, name] = repo.split('/');
-  if (!owner || !name) {
+function parseRepo(repo: string): { owner: string; name: string } {
+  const parts = repo.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(`Invalid repo format: ${repo}`);
   }
+  return { owner: parts[0], name: parts[1] };
+}
+
+async function fetchRepoDataWithGraphQL(repo: string, token?: string): Promise<RawRepoData> {
+  const { owner, name } = parseRepo(repo);
 
   const snapshot = await githubGraphql<GraphQLRepoSnapshot>(GRAPHQL_REPO_SNAPSHOT_QUERY, { owner, name }, token);
   const repository = snapshot.repository;
@@ -337,8 +342,8 @@ async function fetchRepoDataWithGraphQL(repo: string, token?: string): Promise<R
   }
 
   const issues = dedupeByNumber([
-    ...collectNodes(repository.issuesCreated?.nodes).map(mapIssueNode),
     ...collectNodes(repository.issuesUpdated?.nodes).map(mapIssueNode),
+    ...collectNodes(repository.issuesCreated?.nodes).map(mapIssueNode),
   ]);
 
   const pulls = mergePulls([
@@ -542,6 +547,8 @@ export async function fetchRepoData(
   repo: string,
   token?: string,
 ): Promise<RawRepoData> {
+  parseRepo(repo);
+
   try {
     return await fetchRepoDataWithGraphQL(repo, token);
   } catch {
