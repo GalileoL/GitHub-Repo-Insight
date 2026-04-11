@@ -8,6 +8,7 @@ const MAX_PAGES = 30; // 3000 items max to stay within reasonable API usage
 interface GitHubPRItem {
   number: number;
   created_at: string;
+  updated_at: string;
   merged_at: string | null;
   state: string;
   user: { login: string } | null;
@@ -16,6 +17,7 @@ interface GitHubPRItem {
 interface GitHubIssueItem {
   number: number;
   created_at: string;
+  updated_at: string;
   closed_at: string | null;
   state: string;
   user: { login: string } | null;
@@ -43,17 +45,22 @@ async function fetchPRs(
   token?: string,
 ): Promise<{ items: GitHubPRItem[]; truncated: boolean }> {
   const apiState = query.state === 'merged' ? 'closed' : query.state === 'all' ? 'all' : query.state;
+  const sortByUpdated = query.state === 'merged' && query.dateRange !== null;
   const items: GitHubPRItem[] = [];
   let truncated = false;
 
   for (let page = 1; page <= MAX_PAGES; page++) {
     const batch = await ghFetch<GitHubPRItem[]>(
-      `/repos/${repo}/pulls?state=${apiState}&sort=created&direction=desc&per_page=100&page=${page}`,
+      `/repos/${repo}/pulls?state=${apiState}&sort=${sortByUpdated ? 'updated' : 'created'}&direction=desc&per_page=100&page=${page}`,
       token,
     );
     if (batch.length === 0) break;
 
     for (const pr of batch) {
+      if (sortByUpdated && isBeforeRange(pr.updated_at, query.dateRange)) {
+        return { items, truncated: false };
+      }
+
       // For merged PR questions, the user usually means merge time, not creation time.
       if (query.state === 'merged' && !pr.merged_at) continue;
 
@@ -79,18 +86,23 @@ async function fetchIssues(
   token?: string,
 ): Promise<{ items: GitHubIssueItem[]; truncated: boolean }> {
   const apiState = query.state === 'merged' ? 'closed' : query.state === 'all' ? 'all' : query.state;
+  const sortByUpdated = query.state === 'closed' && query.dateRange !== null;
   const items: GitHubIssueItem[] = [];
   let truncated = false;
 
   for (let page = 1; page <= MAX_PAGES; page++) {
     const batch = await ghFetch<GitHubIssueItem[]>(
-      `/repos/${repo}/issues?state=${apiState}&sort=created&direction=desc&per_page=100&page=${page}`,
+      `/repos/${repo}/issues?state=${apiState}&sort=${sortByUpdated ? 'updated' : 'created'}&direction=desc&per_page=100&page=${page}`,
       token,
     );
     if (batch.length === 0) break;
 
     for (const issue of batch) {
       if (issue.pull_request) continue; // GitHub issues API includes PRs
+
+      if (sortByUpdated && isBeforeRange(issue.updated_at, query.dateRange)) {
+        return { items, truncated: false };
+      }
 
       const filterDate = query.state === 'closed' ? issue.closed_at : issue.created_at;
 

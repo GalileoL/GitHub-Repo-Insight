@@ -126,20 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.setHeader('X-Accel-Buffering', 'no');
         res.setHeader('X-Request-ID', requestId);
 
-        await setStreamSessionSnapshot({
-          requestId,
-          login: auth.login!,
-          repo,
-          question,
-          createdAt: Date.now(),
-          contextText: '',
-          contextPrefix: analyticsContext,
-          sources,
-        });
-        await setStreamSessionProgress(requestId, { lastSeq: 0, partialAnswer: '' });
-
         let aborted = false;
-        let streamCompleted = false;
         const cleanup = () => { aborted = true; };
         req.on('close', cleanup);
         req.on('error', cleanup);
@@ -154,15 +141,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             metrics.incrementEventCount();
             res.write(`data: [DONE]\n\n`);
             metrics.incrementEventCount();
-            await setStreamSessionProgress(requestId, { lastSeq: 1, partialAnswer: analyticsAnswer });
-            streamCompleted = true;
           }
         } catch (streamErr) {
           const errorMessage = streamErr instanceof Error ? streamErr.message : 'Stream error';
           const errorToRecord = streamErr instanceof Error ? streamErr : new Error(errorMessage);
           metrics.recordError(errorToRecord, categorizeError(errorToRecord));
           metrics.incrementErrorCount();
-          await setStreamSessionProgress(requestId, { lastSeq: 0, partialAnswer: '' });
 
           if (res.writable) {
             res.write(`data: ${JSON.stringify({ type: 'error', message: errorMessage })}\n\n`);
@@ -171,10 +155,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } finally {
           req.removeListener('close', cleanup);
           req.removeListener('error', cleanup);
-
-          if (streamCompleted) {
-            await deleteStreamSession(requestId);
-          }
 
           logStreamMetrics(`[ask.ts analytics-stream] ${repo}`, metrics.end());
           res.end();

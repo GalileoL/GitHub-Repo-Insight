@@ -32,6 +32,7 @@ describe('executeAnalyticsQuery', () => {
         {
           number: 1,
           created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-03-10T12:00:00Z',
           merged_at: '2024-03-10T12:00:00Z',
           state: 'closed',
           user: { login: 'alice' },
@@ -39,6 +40,7 @@ describe('executeAnalyticsQuery', () => {
         {
           number: 2,
           created_at: '2024-03-03T00:00:00Z',
+          updated_at: '2024-04-02T00:00:00Z',
           merged_at: '2024-04-02T00:00:00Z',
           state: 'closed',
           user: { login: 'bob' },
@@ -57,6 +59,7 @@ describe('executeAnalyticsQuery', () => {
 
     const result = await executeAnalyticsQuery('owner/repo', query);
 
+    expect(mockedGhFetch.mock.calls[0][0]).toContain('sort=updated');
     expect(result.data.count).toBe(1);
     expect(result.answer).toContain('Found **1** merged pull request');
   });
@@ -67,6 +70,7 @@ describe('executeAnalyticsQuery', () => {
         {
           number: 11,
           created_at: '2024-01-05T00:00:00Z',
+          updated_at: '2024-03-08T00:00:00Z',
           closed_at: '2024-03-08T00:00:00Z',
           state: 'closed',
           user: { login: 'alice' },
@@ -74,6 +78,7 @@ describe('executeAnalyticsQuery', () => {
         {
           number: 12,
           created_at: '2024-03-10T00:00:00Z',
+          updated_at: '2024-04-01T00:00:00Z',
           closed_at: '2024-04-01T00:00:00Z',
           state: 'closed',
           user: { login: 'bob' },
@@ -92,6 +97,7 @@ describe('executeAnalyticsQuery', () => {
 
     const result = await executeAnalyticsQuery('owner/repo', query);
 
+    expect(mockedGhFetch.mock.calls[0][0]).toContain('sort=updated');
     expect(result.data.count).toBe(1);
     expect(result.answer).toContain('Found **1** closed issue');
   });
