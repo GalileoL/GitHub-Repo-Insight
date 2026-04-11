@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildContextText, buildMessagesFromContext } from './index.js';
-import type { ScoredChunk } from '../types.js';
+import { buildContextText, buildMessagesFromContext } from '../../../../../lib/rag/llm/index.js';
+import type { ScoredChunk } from '../../../../../lib/rag/types.js';
 
 describe('buildContextText', () => {
   it('formats chunks into a stable prompt context', () => {

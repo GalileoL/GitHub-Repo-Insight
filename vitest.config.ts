@@ -3,13 +3,13 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'lib/**/*.test.ts'],
+    include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     globals: true,
     coverage: {
       reporter: ['text', 'lcov'],
     },
     environmentMatchGlobs: [
-      ['lib/**/*.test.ts', 'node'],
+      ['test/unit/lib/**/*.test.ts', 'node'],
     ],
   },
 });

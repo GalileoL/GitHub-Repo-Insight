@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAnalyticsQuery } from './parse-analytics.js';
+import { parseAnalyticsQuery } from '../../../../../lib/rag/intents/parse-analytics.js';
 
 describe('parseAnalyticsQuery', () => {
   // ── Entity detection ──
