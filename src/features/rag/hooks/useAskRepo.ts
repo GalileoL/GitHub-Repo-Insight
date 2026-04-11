@@ -23,6 +23,22 @@ export function useAskRepo(repo: string) {
     return `rag-cache:${repo}:${hash}`;
   };
 
+  const clearRepoAnswerCache = useCallback(() => {
+    try {
+      const prefix = `rag-cache:${repo}:`;
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(prefix)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // ignore localStorage access issues
+    }
+  }, [repo]);
+
   const getCachedAnswer = (question: string) => {
     try {
       const key = makeCacheKey(question);
@@ -61,6 +77,11 @@ export function useAskRepo(repo: string) {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { history, addEntry, updateEntry, clearHistory } = useAskHistory(repo);
+
+  const clearAllHistory = useCallback(() => {
+    clearHistory();
+    clearRepoAnswerCache();
+  }, [clearHistory, clearRepoAnswerCache]);
 
   const flushBufferedDeltas = useCallback(() => {
     if (flushTimerRef.current) {
@@ -342,6 +363,6 @@ export function useAskRepo(repo: string) {
     reset,
     history,
     updateEntry,
-    clearHistory,
+    clearHistory: clearAllHistory,
   };
 }
