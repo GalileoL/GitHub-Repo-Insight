@@ -13,7 +13,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 
 ## 2) Top-Level Structure
 - `src/`: frontend app (pages, components, hooks, stores, utils)
-- `api/`: Vercel serverless endpoints (`auth`, `rag/ask`, `rag/ingest`, `rag/status`)
+- `api/`: Vercel serverless endpoints (`auth`, `rag/ask`, `rag/ingest`, `rag/resume`, `rag/share`, `rag/status`)
 - `lib/rag/`: shared backend logic (auth, retrieval, llm, storage, chunking, github fetchers)
 - `docs/plans/`: architecture and hardening notes
 - `README.md`: user-facing docs
@@ -32,6 +32,7 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Backend runs classify -> hybrid retrieval -> **conditional query rewrite** -> merge -> rerank -> LLM answer
   - Frontend renders answer and source citations
   - User can optionally create a share link, which is stored in Redis and expires after 7 days
+  - Pure analytics intent path can return deterministic answers directly (bypasses RAG retrieval/LLM rewriting)
 
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
@@ -139,10 +140,9 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - **Stop → Retry bug fixed (2026-03-20):** resume path was not falling back when session not found (404), causing error state + empty red box instead of a fresh ask. Fix: detect `session not found` in `performResume` catch → clear `requestIdRef` → `mutation.mutate(question)`. Also fixed `AskRepoPanel` error box to show `streamError ?? mutation.error?.message` (were different error sources).
 
 ### Next Phase (TODO)
-- Reconnect/resume protocol (save position in stream)
-- Heartbeat events (prevent nginx/proxy timeout)
-- Metrics: TTFB, duration, cancel rate, fail rate
-- Dedicated tests for stream interruption scenarios
+- E2E tests for full interruption/retry paths
+- Stream telemetry sink integration (external dashboarding)
+- Resume hardening against payload tampering
 
 ## 7) Markdown Rendering Notes
 - Rendering is custom, not `react-markdown`.
@@ -170,21 +170,27 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - Unified error event (`type: 'error'`) for both server and parse errors
   - Partial answer preservation on cancel
   - Retry mechanism via `useAskRepo.retry()`
-- 🔄 In Progress:
-  - Enhanced SSE parser for fragmented events
-  - Remove timeout concerns
+- ✅ Implemented beyond Phase 1:
+  - Heartbeat events in streaming paths
+  - Resume endpoint with Redis checkpoint replay
+  - Server/client stream metrics and error categorization
+  - Deterministic analytics-only SSE excludes resumable session persistence (prevents resume/LLM drift)
 - ❌ Not yet implemented:
-  - Heartbeat events
-  - Metrics & monitoring (TTFB, duration, cancel rate)
-  - Comprehensive stream interrupt tests
+  - E2E interruption/retry tests with real providers
+  - External telemetry sink and dashboards
 
 ## 9) Commands
 - Install: `npm install`
 - Frontend dev: `npm run dev`
 - API dev (Vercel): `npm run dev:api`
 - Build: `npm run build`
+- Test: `npm test`
 - Lint: `npm run lint`
 - Preview: `npm run preview`
+
+## CI Checks
+- `.github/workflows/ci.yml`: runs `npm ci`, `npx tsc -b`, `npm run lint`, `npm test`, `npx vite build`
+- Trigger scope: PRs to `main` and pushes to `main`
 
 ## 10) Environment Essentials
 - OAuth:
@@ -319,3 +325,24 @@ Update this file when any of these changes happen:
 - Vercel cold start may interrupt early deltas; Phase 2 heartbeat helps
 - Multi-region deployments: stream state not shared (per-region only)
 - Keep security hardening notes aligned with `docs/plans/2026-03-18-security-hardening-checklist.md`
+
+## 15) Memory Sync Template
+
+Use this checklist whenever architecture/workflow behavior changes.
+
+### Canonical-first update order
+1. Update this file (`Memory.md`) first as the canonical long-form memory.
+2. Update `README.md` for user-facing runtime/workflow changes.
+3. Update `/memories/repo/` snapshots as condensed operational facts.
+4. Ensure `/memories/repo/` does not conflict with `Memory.md`.
+
+### Minimal sync checklist
+- [ ] Core flows changed? Update sections `3`, `4`, and relevant roadmap/status sections.
+- [ ] API contract changed? Update endpoint bullets and request/response notes.
+- [ ] SSE/retry behavior changed? Update sections `6`, `8`, and Redis key notes if needed.
+- [ ] Build/test/CI changed? Update commands and CI summary.
+- [ ] Env vars changed? Update section `10` and README env table.
+- [ ] Added/removed major modules? Update top-level structure and architecture map.
+
+### Commit note convention (recommended)
+- Include `memory-sync` in docs commit messages touching `Memory.md` and `/memories/repo/`.

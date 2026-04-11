@@ -12,6 +12,16 @@ Before marking any task as complete, every agent must do all of the following in
 4. Run lint (`npm run lint`).
 5. Report risk level, review findings, and test/lint results in the final response.
 
+## Project Knowledge Sync
+
+- For `L2`/`L3` changes, or for `L0`/`L1` changes that affect architecture, workflows, API contracts, testing layout, or deployment behavior, run a repository scan before finishing.
+- After the scan, update project knowledge artifacts when needed:
+	- `README.md` for user-facing architecture/workflow/runtime behavior changes.
+	- `Memory.md` as the canonical in-repo long-form project memory.
+	- Repository memory files under `/memories/repo/` for concise, repository-scoped operational facts.
+	- Keep `/memories/repo/` snapshots consistent with `Memory.md` (condensed operational view, not a conflicting source).
+- If no updates are needed after the scan, explicitly state that in the final response.
+
 ## Risk Levels
 
 - `L0` Docs-only and non-runtime text changes (e.g., markdown docs, comments only).

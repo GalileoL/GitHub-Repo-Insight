@@ -118,6 +118,16 @@ npm run build
 npm run preview
 ```
 
+### Testing & Quality
+
+```bash
+npm test
+npm run lint
+```
+
+- Tests are organized under `test/` with `test/unit/` and `test/integration/`.
+- CI in `.github/workflows/ci.yml` runs type-check, lint, test, and build on PRs to `main` and pushes to `main`.
+
 ## Project Architecture
 
 ## AI Project Memory
@@ -125,6 +135,8 @@ npm run preview
 For AI-assisted development and onboarding, see:
 
 - `Memory.md` — concise architecture, API contracts, SSE/markdown behavior, and maintenance checklist
+- `AGENTS.md` — canonical AI workflow (risk-based review/test policy + branch/PR flow)
+- Repository memory under `/memories/repo/` — concise operational facts kept in sync after repo scans
 
 ```
 src/
@@ -216,10 +228,11 @@ lib/
     - Unified error event protocol; partial answers preserved on cancel
     - `useAskRepo` exports: `cancel()`, `retry()`, `streamStatus`, `streamError`
     - UI improvements: status indicators, stop/retry buttons, error boundary
-- 🔄 **Phase 2 (planned)** — Reconnect protocol & observability:
-    - Heartbeat events to prevent proxy timeout
-    - Resume/partial-continue stream from last received position
-    - Metrics: TTFB, stream duration, cancel rate, failure distribution
+- ✅ **Phase 2 (implemented) — Resume + observability improvements**:
+    - Resume endpoint (`/api/rag/resume`) continues streams from Redis checkpoints
+    - Heartbeat events are emitted to reduce proxy timeout risk
+    - Request IDs and stream metrics are logged for tracing
+    - Analytics-only deterministic SSE responses are excluded from resumable session persistence to prevent resume/LLM drift
 
 ## Deployment
 
