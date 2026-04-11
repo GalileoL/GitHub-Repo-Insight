@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   check:
-    name: Lint & Build
+    name: Check
     runs-on: ubuntu-latest
     env:
       # GitHub Actions toolkits are moving to Node 24; opt in early to avoid deprecation warnings.
@@ -35,6 +35,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npx vite build
