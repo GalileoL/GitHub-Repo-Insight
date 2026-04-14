@@ -205,7 +205,6 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - `GITHUB_APP_CLIENT_SECRET`
   - `AUTH_SESSION_SECRET` (required for cookie signing)
   - `GITHUB_AUTH_CALLBACK_URL` (optional override)
-  - backward-compatible aliases: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
 - RAG core:
   - `OPENAI_API_KEY` (embeddings required)
   - `UPSTASH_VECTOR_REST_URL`

@@ -30,7 +30,7 @@ function resolveCallbackUrl(req: VercelRequest): string {
 }
 
 function resolveClientId(): string {
-  return process.env.GITHUB_APP_CLIENT_ID || process.env.GITHUB_CLIENT_ID || '';
+  return process.env.GITHUB_APP_CLIENT_ID || '';
 }
 
 function toCodeChallenge(verifier: string): string {
@@ -51,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const clientId = resolveClientId();
   if (!clientId) {
-    return res.status(500).json({ error: 'Missing GITHUB_APP_CLIENT_ID (or GITHUB_CLIENT_ID).' });
+    return res.status(500).json({ error: 'Missing GITHUB_APP_CLIENT_ID.' });
   }
 
   const callbackUrl = resolveCallbackUrl(req);

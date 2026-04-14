@@ -39,11 +39,11 @@ function resolveCallbackUrl(req: VercelRequest): string {
 }
 
 function resolveClientId(): string {
-  return process.env.GITHUB_APP_CLIENT_ID || process.env.GITHUB_CLIENT_ID || '';
+  return process.env.GITHUB_APP_CLIENT_ID || '';
 }
 
 function resolveClientSecret(): string {
-  return process.env.GITHUB_APP_CLIENT_SECRET || process.env.GITHUB_CLIENT_SECRET || '';
+  return process.env.GITHUB_APP_CLIENT_SECRET || '';
 }
 
 function readFlowPayload(req: VercelRequest): OAuthFlowPayload | null {
