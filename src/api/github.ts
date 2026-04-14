@@ -1,4 +1,3 @@
-import { useAuthStore } from '../store/auth';
 import { GITHUB_API_BASE } from '../constants';
 import type { RateLimit } from '../types/github';
 
@@ -97,10 +96,9 @@ function writeCachedJson<T>(url: string, etag: string | null, data: T): void {
   }
 }
 
-function buildGitHubHeaders(token?: string): Record<string, string> {
+function buildGitHubHeaders(): Record<string, string> {
   return {
     Accept: 'application/vnd.github+json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 
@@ -110,14 +108,13 @@ function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
 }
 
 async function githubGraphql<T>(query: string, variables: Record<string, string>): Promise<T> {
-  const token = useAuthStore.getState().token;
-  const response = await fetch(`${GITHUB_API_BASE}/graphql`, {
+  const response = await fetch('/api/github', {
     method: 'POST',
     headers: {
-      ...buildGitHubHeaders(token ?? undefined),
+      ...buildGitHubHeaders(),
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ query, variables }),
+    body: JSON.stringify({ path: '/graphql', method: 'POST', query, variables }),
   });
 
   updateRateLimit(response.headers);
@@ -418,14 +415,17 @@ async function fetchMonthlyIssuePrCountsFromGraphQL(
 
 async function fetchGitHubResponse(url: string, init: RequestInit, cacheable: boolean) {
   const cached = cacheable ? readCachedJson<unknown>(url) : null;
-  const token = useAuthStore.getState().token ?? undefined;
+  const originalUrl = new URL(url);
+  const proxyOrigin = globalThis.location?.origin ?? 'http://localhost';
+  const proxyUrl = new URL('/api/github', proxyOrigin);
+  proxyUrl.searchParams.set('path', `${originalUrl.pathname}${originalUrl.search}`);
   const headers = {
-    ...buildGitHubHeaders(token),
+    ...buildGitHubHeaders(),
     ...normalizeHeaders(init.headers),
     ...(cached?.etag ? { 'If-None-Match': cached.etag } : {}),
   };
 
-  const response = await fetch(url, {
+  const response = await fetch(proxyUrl.toString(), {
     ...init,
     headers,
   });

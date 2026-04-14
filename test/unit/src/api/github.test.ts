@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../../src/store/auth', () => ({
-  useAuthStore: {
-    getState: () => ({ token: 'token-123' }),
-  },
-}));
-
 import { githubApi } from '../../../../src/api/github.js';
 
 function makeHeaders(values: Record<string, string> = {}) {
@@ -64,8 +58,8 @@ describe('githubFetch caching', () => {
       const headers = Object.fromEntries(new Headers(init?.headers as HeadersInit).entries());
 
       if (fetchMock.mock.calls.length === 1) {
-        expect(headers.authorization).toBe('Bearer token-123');
         expect(headers.accept).toBe('application/vnd.github+json');
+        expect(_url).toContain('/api/github?path=%2Frepos%2Fowner%2Frepo');
         return {
           ok: true,
           status: 200,
@@ -81,6 +75,7 @@ describe('githubFetch caching', () => {
       }
 
       expect(headers['if-none-match']).toBe('"etag-1"');
+      expect(_url).toContain('/api/github?path=%2Frepos%2Fowner%2Frepo');
       return {
         ok: false,
         status: 304,

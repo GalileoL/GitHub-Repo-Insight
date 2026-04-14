@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/auth';
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const setAuth = useAuthStore((s) => s.setAuth);
+  const setUser = useAuthStore((s) => s.setUser);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -32,7 +32,7 @@ export default function AuthCallback() {
           throw new Error('Authentication response missing user profile');
         }
 
-        setAuth(null, {
+        setUser({
           login: tokenData.user.login,
           avatar_url: tokenData.user.avatar_url,
         });
@@ -46,7 +46,7 @@ export default function AuthCallback() {
     }
 
     exchangeToken(code, state);
-  }, [searchParams, setAuth, navigate]);
+  }, [searchParams, setUser, navigate]);
 
   if (error) {
     return (

@@ -102,7 +102,7 @@ cp .env.example .env
 | `RAG_DAILY_INGEST_LIMIT` | Max index/re-index operations per user per day (default: `5`) |
 | `ADMIN_GITHUB_USERS` | Comma-separated GitHub usernames with unlimited usage |
 
-> **Note:** The dashboard works without login (limited to anonymous GitHub rate limits) and without AI keys (the Ask Repo feature will be unavailable). To create a GitHub App, go to [GitHub App settings](https://github.com/settings/apps), enable OAuth user authorization, and configure callback URL as `/auth/callback`. Ask Repo login now uses server-managed HttpOnly session cookies with state + PKCE. For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20). Redis is also required for chunk-count caching, stream resume, and share links.
+> **Note:** The dashboard works without login (limited to anonymous GitHub rate limits) and without AI keys (the Ask Repo feature will be unavailable). To create a GitHub App, go to [GitHub App settings](https://github.com/settings/apps), enable OAuth user authorization, and configure callback URL as `/auth/callback`. Ask Repo login now uses server-managed HttpOnly session cookies with state + PKCE, and GitHub API requests from the dashboard are proxied through the server so the browser does not hold a GitHub token. For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20). Redis is also required for chunk-count caching, stream resume, and share links.
 
 ### Development
 
@@ -142,7 +142,7 @@ For AI-assisted development and onboarding, see:
 
 ```
 src/
-├── api/            # GitHub API client with rate limiting + ETag-backed GET caching
+├── api/            # Same-origin GitHub API client (server proxy + ETag-backed GET caching)
 ├── assets/         # Static assets
 ├── components/
 │   ├── charts/     # ECharts-based visualization components (lazy-loaded)
@@ -182,7 +182,7 @@ lib/
     └── types.ts    # Shared RAG type definitions
 ```
 
-**Dashboard data flow:** GitHub API → `githubFetch` client → transformers → TanStack Query hooks → chart components
+**Dashboard data flow:** Browser → `/api/github` proxy → GitHub API / GraphQL (server-side session token when available) → local ETag-backed cache → transformers → TanStack Query hooks → chart components
     - Repo overview + language distribution now share one GraphQL snapshot request (`getRepoSnapshot`) via a shared React Query key.
     - Top contributors are now aggregated from GraphQL commit history (with REST fallback), and monthly issue/PR counts are fetched via one GraphQL aliased search query.
 

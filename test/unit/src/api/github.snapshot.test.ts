@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../../src/store/auth', () => ({
-  useAuthStore: {
-    getState: () => ({ token: 'token-123' }),
-  },
-}));
-
 import { githubApi } from '../../../../src/api/github.js';
 
 function makeHeaders(values: Record<string, string> = {}) {
@@ -31,7 +25,14 @@ describe('githubApi.getRepoSnapshot', () => {
 
   it('maps GraphQL repository snapshot to dashboard repo + languages', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body ?? '{}')) as { query: string; variables: Record<string, string> };
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        path?: string;
+        method?: string;
+        query: string;
+        variables: Record<string, string>;
+      };
+      expect(_url).toBe('/api/github');
+      expect(body).toMatchObject({ path: '/graphql', method: 'POST' });
       expect(body.variables).toEqual({ owner: 'owner', name: 'repo' });
       expect(body.query).toContain('DashboardRepoSnapshot');
       expect(body.query).toContain('languages(first: 100');
@@ -184,8 +185,16 @@ describe('githubApi.getRepoSnapshot', () => {
     vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));
 
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body ?? '{}')) as { query: string; variables: Record<string, string> };
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        path?: string;
+        method?: string;
+        query: string;
+        variables: Record<string, string>;
+      };
 
+      expect(_url).toBe('/api/github');
+      expect(body.path).toBe('/graphql');
+      expect(body.method).toBe('POST');
       expect(body.query).toContain('query MonthlyIssuePrCounts');
       expect(body.query).toContain('issue_');
       expect(body.query).toContain('pr_');
