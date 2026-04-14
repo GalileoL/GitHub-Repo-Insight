@@ -92,6 +92,7 @@ function parseSessionCookie(req: VercelRequest): GitHubSessionPayload | null {
   const payload = verifySignedPayload<GitHubSessionPayload>(cookies[GITHUB_SESSION_COOKIE]);
   if (!payload) return null;
   if (!payload.token || !payload.login || !payload.userId || !payload.avatarUrl) return null;
+  if (!Number.isFinite(payload.issuedAt) || payload.issuedAt <= 0) return null;
 
   if (payload.refreshTokenExpiresAt && Date.now() > payload.refreshTokenExpiresAt) {
     return null;
@@ -211,8 +212,11 @@ async function getTokenFromRequest(req: VercelRequest, res: VercelResponse): Pro
 
   const refreshed = await refreshGitHubAccessToken(session.refreshToken!);
   if (!refreshed?.access_token) {
-    clearGitHubSession(res);
-    return undefined;
+    if (session.tokenExpiresAt && Date.now() > session.tokenExpiresAt) {
+      clearGitHubSession(res);
+      return undefined;
+    }
+    return session.token;
   }
 
   const now = Date.now();
