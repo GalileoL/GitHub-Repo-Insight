@@ -205,6 +205,7 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - `GITHUB_APP_CLIENT_SECRET`
   - `AUTH_SESSION_SECRET` (required for cookie signing)
   - `GITHUB_AUTH_CALLBACK_URL` (optional override)
+- Dashboard GitHub API requests go through `/api/github`; the browser no longer holds a GitHub token.
 - RAG core:
   - `OPENAI_API_KEY` (embeddings required)
   - `UPSTASH_VECTOR_REST_URL`

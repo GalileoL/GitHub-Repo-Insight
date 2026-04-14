@@ -199,7 +199,7 @@ function shouldAttemptRefresh(payload: GitHubSessionPayload): boolean {
   return Date.now() >= payload.tokenExpiresAt - 60_000;
 }
 
-async function getTokenFromRequest(req: VercelRequest, res: VercelResponse): Promise<string | undefined> {
+export async function getGitHubAccessToken(req: VercelRequest, res: VercelResponse): Promise<string | undefined> {
   const bearerToken = extractBearerToken(req.headers.authorization);
   if (bearerToken) return bearerToken;
 
@@ -266,7 +266,7 @@ export async function verifyGitHubToken(token: string | undefined): Promise<Auth
 }
 
 export async function authenticateRequest(req: VercelRequest, res: VercelResponse): Promise<AuthenticatedRequestResult> {
-  const token = await getTokenFromRequest(req, res);
+  const token = await getGitHubAccessToken(req, res);
   const auth = await verifyGitHubToken(token);
   if (!auth.authenticated) {
     return auth;
