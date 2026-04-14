@@ -4,7 +4,7 @@ import { chunkRepoData } from '../../lib/rag/chunking/index.js';
 import { embedTexts } from '../../lib/rag/embeddings/index.js';
 import { prewarmEmbeddings } from '../../lib/rag/llm/index.js';
 import { upsertChunks, deleteRepoChunks, setRepoChunkCount } from '../../lib/rag/storage/index.js';
-import { verifyGitHubToken, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
+import { authenticateRequest, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -12,10 +12,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // --- Auth (require login) ---
-  const authToken = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || undefined;
-  const auth = await verifyGitHubToken(authToken);
+  const auth = await authenticateRequest(req, res);
   if (!auth.authenticated) {
     return res.status(401).json({ error: auth.error });
+  }
+
+  if (!auth.token) {
+    return res.status(401).json({ error: 'Missing GitHub access token in authenticated session.' });
   }
 
   // --- Rate limit for indexing ---
@@ -32,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { repo } = req.body ?? {};
   // Use the authenticated user's token for GitHub data fetching
-  const githubToken = authToken;
+  const githubToken = auth.token;
 
   if (!repo || typeof repo !== 'string') {
     return res.status(400).json({ error: 'Missing repo in request body' });

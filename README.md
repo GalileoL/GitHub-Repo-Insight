@@ -26,7 +26,7 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 - **Release Timeline** — Scrollable vertical timeline of the latest releases
 - **Commit Heatmap** — GitHub-style calendar grid of daily commit activity
 - **Draggable Dashboard** — Drag-and-drop to reorder dashboard cards; layout persisted to localStorage
-- **GitHub OAuth** — Optional sign-in to increase the API rate limit from 60 to 5,000 requests/hour
+- **GitHub App Auth** — Optional sign-in via server-managed OAuth (state + PKCE + HttpOnly session cookie)
 - **Ask Repo (AI)** — Ask natural-language questions about any indexed repository, powered by RAG
 - **SSE Streaming** — LLM answers stream token-by-token with a live typing cursor
 - **Multi-LLM Support** — Switch between OpenAI, DeepSeek, Groq, Gemini, and Claude via a single env var
@@ -76,7 +76,7 @@ npm install
 
 ### Environment Variables
 
-Copy the example env file and fill in your GitHub OAuth credentials:
+Copy the example env file and fill in your GitHub App credentials:
 
 ```bash
 cp .env.example .env
@@ -84,9 +84,12 @@ cp .env.example .env
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_GITHUB_CLIENT_ID` | GitHub OAuth App client ID (used in the browser) |
-| `GITHUB_CLIENT_ID` | Same client ID (used by the serverless function) |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret (server-side only) |
+| `GITHUB_APP_CLIENT_ID` | GitHub App OAuth client ID (server-side login redirect flow) |
+| `GITHUB_APP_CLIENT_SECRET` | GitHub App OAuth client secret (server-side only) |
+| `AUTH_SESSION_SECRET` | Random secret used to sign HttpOnly auth session cookies |
+| `GITHUB_AUTH_CALLBACK_URL` | Optional fixed callback URL (`https://your-domain.com/auth/callback`) |
+| `GITHUB_CLIENT_ID` | Optional alias for backward compatibility |
+| `GITHUB_CLIENT_SECRET` | Optional alias for backward compatibility |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings (always required for Ask Repo) |
 | `UPSTASH_VECTOR_REST_URL` | Upstash Vector database REST endpoint |
 | `UPSTASH_VECTOR_REST_TOKEN` | Upstash Vector authentication token |
@@ -101,7 +104,7 @@ cp .env.example .env
 | `RAG_DAILY_INGEST_LIMIT` | Max index/re-index operations per user per day (default: `5`) |
 | `ADMIN_GITHUB_USERS` | Comma-separated GitHub usernames with unlimited usage |
 
-> **Note:** The dashboard works without OAuth (limited to 60 req/hr) and without AI keys (the Ask Repo feature will be unavailable). To create an OAuth App, go to [GitHub Developer Settings](https://github.com/settings/developers). For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20). Redis is also required for chunk-count caching, stream resume, and share links.
+> **Note:** The dashboard works without login (limited to anonymous GitHub rate limits) and without AI keys (the Ask Repo feature will be unavailable). To create a GitHub App, go to [GitHub App settings](https://github.com/settings/apps), enable OAuth user authorization, and configure callback URL as `/auth/callback`. Ask Repo login now uses server-managed HttpOnly session cookies with state + PKCE. For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20). Redis is also required for chunk-count caching, stream resume, and share links.
 
 ### Development
 
@@ -141,7 +144,7 @@ For AI-assisted development and onboarding, see:
 
 ```
 src/
-├── api/            # GitHub API client with auth token injection, rate limiting & ETag-backed GET caching
+├── api/            # GitHub API client with rate limiting + ETag-backed GET caching
 ├── assets/         # Static assets
 ├── components/
 │   ├── charts/     # ECharts-based visualization components (lazy-loaded)
@@ -152,7 +155,7 @@ src/
 ├── layouts/        # Page layout shells (MainLayout)
 ├── pages/          # Route-level page components
 ├── router/         # React Router configuration with lazy loading
-├── store/          # Zustand auth store with localStorage persistence
+├── store/          # Zustand auth store (runtime state; no token persistence)
 ├── types/          # TypeScript interfaces for GitHub API responses
 ├── utils/          # Transformers, validators, dayjs config, ECharts theme
 ├── features/
@@ -162,7 +165,7 @@ src/
 │       ├── hooks/  # useAskRepo, useAskHistory, useIngestStatus (TanStack Query)
 │       └── types/  # Frontend RAG types
 api/
-├── auth/           # Vercel Serverless Function for OAuth token exchange
+├── auth/           # Vercel Serverless auth endpoints (start/callback/session/logout)
 └── rag/            # RAG serverless endpoints
     ├── ask.ts      # POST — hybrid retrieval + conditional query rewrite + LLM answer generation
     ├── ingest.ts   # POST — fetch GitHub data, chunk, embed, store
@@ -243,7 +246,7 @@ This project is designed for **Vercel**:
 
 1. Push the repository to GitHub
 2. Import the project in [Vercel](https://vercel.com)
-3. Set the environment variables (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `VITE_GITHUB_CLIENT_ID`, `OPENAI_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, and optionally `LLM_PROVIDER`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `RAG_DAILY_LIMIT`, `RAG_DAILY_INGEST_LIMIT`, `ADMIN_GITHUB_USERS`)
+3. Set the environment variables (`GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `AUTH_SESSION_SECRET`, `OPENAI_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, and optionally `GITHUB_AUTH_CALLBACK_URL`, `LLM_PROVIDER`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `RAG_DAILY_LIMIT`, `RAG_DAILY_INGEST_LIMIT`, `ADMIN_GITHUB_USERS`)
 4. Deploy — the `api/` directory is automatically detected as Serverless Functions
 
 ### Ask Repo Architecture

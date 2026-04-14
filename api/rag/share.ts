@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyGitHubToken } from '../../lib/rag/auth/index.js';
+import { authenticateRequest } from '../../lib/rag/auth/index.js';
 import { setShareEntry } from '../../lib/rag/storage/index.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -11,8 +11,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(503).json({ error: 'Share links are unavailable because Redis is not configured.' });
   }
 
-  const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || undefined;
-  const auth = await verifyGitHubToken(token);
+  const auth = await authenticateRequest(req, res);
   if (!auth.authenticated) {
     return res.status(401).json({ error: auth.error });
   }

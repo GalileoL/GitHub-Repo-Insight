@@ -52,12 +52,12 @@ const triggerIcon = {
 };
 
 export function Navbar() {
-  const { user, token, logout } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const { mode, setMode } = useThemeStore();
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const isAuthenticated = !!token;
+  const isAuthenticated = !!user;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -67,10 +67,17 @@ export function Navbar() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Ignore logout network errors; clear local auth state regardless.
+    }
     logout();
     navigate('/');
   };
+
+  const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
 
   return (
     <nav className="sticky top-0 z-50 border-b border-border-default bg-bg-surface/80 backdrop-blur-md">
@@ -140,7 +147,7 @@ export function Navbar() {
                   <span className="text-sm text-accent-yellow">Anonymous</span>
                 </div>
                 <a
-                  href={`https://github.com/login/oauth/authorize?client_id=${import.meta.env.VITE_GITHUB_CLIENT_ID || ''}&redirect_uri=${encodeURIComponent(window.location.origin + '/auth/callback')}&scope=read:user`}
+                  href={`/api/auth/start?returnTo=${returnTo}`}
                   className="rounded-lg bg-accent-blue/10 border border-accent-blue/20 px-4 py-1.5 text-sm font-medium text-accent-blue hover:bg-accent-blue/20 transition-colors"
                 >
                   Sign in with GitHub

@@ -16,8 +16,8 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
   const fullRepo = `${owner}/${repo}`;
   const [question, setQuestion] = useState('');
 
-  const token = useAuthStore((s) => s.token);
-  const isLoggedIn = !!token;
+  const user = useAuthStore((s) => s.user);
+  const isLoggedIn = !!user;
 
   const status = useIngestStatus(fullRepo);
   const ingest = useIngestRepo(fullRepo);
@@ -56,7 +56,6 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           repo: fullRepo,
@@ -120,9 +119,8 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
 
   // Login gate
   if (!isLoggedIn) {
-    const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID ?? '';
-    const redirectUri = encodeURIComponent(window.location.origin + '/auth/callback');
-    const oauthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=read:user`;
+    const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+    const oauthUrl = `/api/auth/start?returnTo=${returnTo}`;
 
     return (
       <div className="space-y-6">

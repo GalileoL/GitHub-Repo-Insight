@@ -10,34 +10,34 @@ export default function AuthCallback() {
 
   useEffect(() => {
     const code = searchParams.get('code');
-    if (!code) {
-      setError('No authorization code received');
+    const state = searchParams.get('state');
+
+    if (!code || !state) {
+      setError('Missing authorization code or state');
       return;
     }
 
-    async function exchangeToken(code: string) {
+    async function exchangeToken(code: string, state: string) {
       try {
         const tokenRes = await fetch('/api/auth/github', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ code, state }),
         });
 
         const tokenData = await tokenRes.json();
         if (!tokenRes.ok) throw new Error(tokenData.error);
 
-        const userRes = await fetch('https://api.github.com/user', {
-          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        if (!tokenData.user?.login || !tokenData.user?.avatar_url) {
+          throw new Error('Authentication response missing user profile');
+        }
+
+        setAuth(null, {
+          login: tokenData.user.login,
+          avatar_url: tokenData.user.avatar_url,
         });
 
-        const userData = await userRes.json();
-
-        setAuth(tokenData.access_token, {
-          login: userData.login,
-          avatar_url: userData.avatar_url,
-        });
-
-        const returnTo = sessionStorage.getItem('auth-return-to') || '/';
+        const returnTo = tokenData.returnTo || sessionStorage.getItem('auth-return-to') || '/';
         sessionStorage.removeItem('auth-return-to');
         navigate(returnTo, { replace: true });
       } catch (err) {
@@ -45,7 +45,7 @@ export default function AuthCallback() {
       }
     }
 
-    exchangeToken(code);
+    exchangeToken(code, state);
   }, [searchParams, setAuth, navigate]);
 
   if (error) {

@@ -7,7 +7,7 @@ import {
   buildSources,
   buildContextText,
 } from '../../lib/rag/llm/index.js';
-import { verifyGitHubToken, checkRateLimit } from '../../lib/rag/auth/index.js';
+import { authenticateRequest, checkRateLimit } from '../../lib/rag/auth/index.js';
 import {
   countRepoChunks,
   getStreamSession,
@@ -27,8 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // --- Auth ---
-  const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || undefined;
-  const auth = await verifyGitHubToken(token);
+  const auth = await authenticateRequest(req, res);
   if (!auth.authenticated) {
     return res.status(401).json({ error: auth.error });
   }
