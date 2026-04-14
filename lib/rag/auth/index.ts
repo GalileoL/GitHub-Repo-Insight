@@ -66,11 +66,11 @@ export interface AuthenticatedRequestResult extends AuthResult {
 }
 
 function getGitHubAppClientId(): string {
-  return process.env.GITHUB_APP_CLIENT_ID || process.env.GITHUB_CLIENT_ID || '';
+  return process.env.GITHUB_APP_CLIENT_ID || '';
 }
 
 function getGitHubAppClientSecret(): string {
-  return process.env.GITHUB_APP_CLIENT_SECRET || process.env.GITHUB_CLIENT_SECRET || '';
+  return process.env.GITHUB_APP_CLIENT_SECRET || '';
 }
 
 function parsePositiveSeconds(value: unknown): number | undefined {

@@ -88,8 +88,6 @@ cp .env.example .env
 | `GITHUB_APP_CLIENT_SECRET` | GitHub App OAuth client secret (server-side only) |
 | `AUTH_SESSION_SECRET` | Random secret used to sign HttpOnly auth session cookies |
 | `GITHUB_AUTH_CALLBACK_URL` | Optional fixed callback URL (`https://your-domain.com/auth/callback`) |
-| `GITHUB_CLIENT_ID` | Optional alias for backward compatibility |
-| `GITHUB_CLIENT_SECRET` | Optional alias for backward compatibility |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings (always required for Ask Repo) |
 | `UPSTASH_VECTOR_REST_URL` | Upstash Vector database REST endpoint |
 | `UPSTASH_VECTOR_REST_TOKEN` | Upstash Vector authentication token |
