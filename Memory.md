@@ -29,6 +29,8 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Chart components render language, commits, contributors, issues/PR trends, releases
 - Ask Repo flow:
   - `AskRepoPanel` checks index status (`/api/rag/status`)
+  - User signs in via `/api/auth/start` (server-generated state + PKCE), callback exchanges code at `/api/auth/github`
+  - Auth session is stored in signed HttpOnly cookie (`gh_app_session`)
   - User triggers index (`/api/rag/ingest`) if needed
   - User asks question (`/api/rag/ask`, optional streaming)
   - Backend runs classify -> hybrid retrieval -> **conditional query rewrite** -> merge -> rerank -> LLM answer
@@ -54,7 +56,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - Storage:
   - `lib/rag/storage/index.ts`: Upstash Vector operations + Redis helpers for chunk counts, stream sessions, and share entries
 - Auth and quotas:
-  - `lib/rag/auth/index.ts`: GitHub token verify + daily ask/ingest limits in Redis
+  - `lib/rag/auth/index.ts`: session-cookie auth, GitHub token verify/refresh, daily ask/ingest limits in Redis
 - GitHub API client:
   - `src/api/github.ts`: shared frontend GitHub client with `If-None-Match` conditional caching for REST GETs, GraphQL dashboard snapshot, GraphQL contributors aggregation (with REST fallback), and GraphQL monthly issue/PR aliased counting
 - Types:
@@ -198,10 +200,12 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - Trigger scope: PRs to `main` and pushes to `main`
 
 ## 10) Environment Essentials
-- OAuth:
-  - `VITE_GITHUB_CLIENT_ID`
-  - `GITHUB_CLIENT_ID`
-  - `GITHUB_CLIENT_SECRET`
+- GitHub App auth:
+  - `GITHUB_APP_CLIENT_ID`
+  - `GITHUB_APP_CLIENT_SECRET`
+  - `AUTH_SESSION_SECRET` (required for cookie signing)
+  - `GITHUB_AUTH_CALLBACK_URL` (optional override)
+  - backward-compatible aliases: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
 - RAG core:
   - `OPENAI_API_KEY` (embeddings required)
   - `UPSTASH_VECTOR_REST_URL`

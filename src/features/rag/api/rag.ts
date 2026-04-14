@@ -151,13 +151,10 @@ export async function fetchIngestStatus(repo: string): Promise<StatusResponse> {
   return res.json();
 }
 
-export async function ingestRepo(repo: string, token?: string): Promise<IngestResponse> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
+export async function ingestRepo(repo: string): Promise<IngestResponse> {
   const res = await fetch('/api/rag/ingest', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ repo }),
   });
   if (!res.ok) {
@@ -167,13 +164,10 @@ export async function ingestRepo(repo: string, token?: string): Promise<IngestRe
   return res.json();
 }
 
-export async function askRepo(repo: string, question: string, token?: string): Promise<AskResponse> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
+export async function askRepo(repo: string, question: string): Promise<AskResponse> {
   const res = await fetch('/api/rag/ask', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ repo, question }),
   });
   if (!res.ok) {
@@ -203,13 +197,12 @@ export interface SSEStreamOptions {
 export async function askRepoStream(
   repo: string,
   question: string,
-  token: string | undefined,
+  _token: string | undefined,
   options: SSEStreamOptions,
 ): Promise<void> {
   const { signal, onDelta, onSources, onError, onStatus, onMetrics, requestId, lastSeq, resume } = options;
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
 
   // Initialize metrics recorder (may be overwritten with server requestId)
   const metrics = new ClientMetricsRecorder(requestId);

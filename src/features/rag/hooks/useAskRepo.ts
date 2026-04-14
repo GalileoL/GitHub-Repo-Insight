@@ -1,14 +1,12 @@
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { askRepoStream } from '../api/rag';
-import { useAuthStore } from '../../../store/auth';
 import { useAskHistory } from './useAskHistory';
 import type { Source } from '../types';
 
 export type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'reconnecting' | 'done' | 'cancelled' | 'error';
 
 export function useAskRepo(repo: string) {
-  const token = useAuthStore((s) => s.token);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const [previousAnswer, setPreviousAnswer] = useState<string | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
@@ -129,7 +127,7 @@ export function useAskRepo(repo: string) {
         await askRepoStream(
           repo,
           question,
-          token ?? undefined,
+          undefined,
           {
             signal: abortControllerRef.current.signal,
             onDelta: (delta, seq) => {
@@ -236,7 +234,7 @@ export function useAskRepo(repo: string) {
       const performResume = async () => {
         isResumingRef.current = true;
         try {
-          await askRepoStream(repo, mutation.variables, token ?? undefined, {
+          await askRepoStream(repo, mutation.variables, undefined, {
             signal: abortControllerRef.current?.signal,
             requestId: requestIdRef.current!,
             lastSeq: lastSeqRef.current,
@@ -302,7 +300,7 @@ export function useAskRepo(repo: string) {
     }
 
     mutation.mutate(mutation.variables);
-  }, [flushBufferedDeltas, mutation, repo, token]);
+  }, [flushBufferedDeltas, mutation, repo]);
 
   /** Show a cached history entry directly without making an API call */
   const showCached = useCallback(

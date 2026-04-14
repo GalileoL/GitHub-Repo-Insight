@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchIngestStatus, ingestRepo } from '../api/rag';
-import { useAuthStore } from '../../../store/auth';
 
 export function useIngestStatus(repo: string) {
   return useQuery({
@@ -13,10 +12,9 @@ export function useIngestStatus(repo: string) {
 
 export function useIngestRepo(repo: string) {
   const queryClient = useQueryClient();
-  const token = useAuthStore((s) => s.token);
 
   return useMutation({
-    mutationFn: () => ingestRepo(repo, token ?? undefined),
+    mutationFn: () => ingestRepo(repo),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rag-status', repo] });
     },

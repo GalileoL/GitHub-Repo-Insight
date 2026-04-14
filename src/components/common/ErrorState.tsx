@@ -7,7 +7,7 @@ interface ErrorStateProps {
 }
 
 export function ErrorState({ message, isRateLimit, onRetry }: ErrorStateProps) {
-  const isAuthenticated = !!useAuthStore((s) => s.token);
+  const isAuthenticated = !!useAuthStore((s) => s.user);
 
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
