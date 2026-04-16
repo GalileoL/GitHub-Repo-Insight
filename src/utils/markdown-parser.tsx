@@ -1,4 +1,5 @@
 import React from 'react';
+import { getRuntimeAllowedOriginPatterns, isAllowedHttpUrl } from './url-safety';
 
 export type MarkdownBlock =
   | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; content: string }
@@ -196,6 +197,7 @@ export function renderMarkdownInline(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   let remaining = text;
   let key = 0;
+  const allowedOriginPatterns = getRuntimeAllowedOriginPatterns();
 
   const patterns = [
     { type: 'image', regex: /!\[([^\]]*)\]\(([^)]+)\)/ },
@@ -232,28 +234,44 @@ export function renderMarkdownInline(text: string): React.ReactNode[] {
     const [full, a, b] = match;
     switch (matchType) {
       case 'image':
-        nodes.push(
-          <img
-            key={key++}
-            src={b}
-            alt={a}
-            className="max-w-full rounded-md"
-            loading="lazy"
-          />,
-        );
+        if (isAllowedHttpUrl(b, allowedOriginPatterns)) {
+          nodes.push(
+            <img
+              key={key++}
+              src={b}
+              alt={a}
+              className="max-w-full rounded-md"
+              loading="lazy"
+            />,
+          );
+        } else {
+          nodes.push(
+            <span key={key++} className="text-text-muted text-xs">
+              [Blocked unsafe image URL]
+            </span>,
+          );
+        }
         break;
       case 'link':
-        nodes.push(
-          <a
-            key={key++}
-            href={b}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-accent-teal hover:underline"
-          >
-            {a}
-          </a>,
-        );
+        if (isAllowedHttpUrl(b, allowedOriginPatterns)) {
+          nodes.push(
+            <a
+              key={key++}
+              href={b}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-accent-teal hover:underline"
+            >
+              {a}
+            </a>,
+          );
+        } else {
+          nodes.push(
+            <span key={key++} className="text-text-muted">
+              {a}
+            </span>,
+          );
+        }
         break;
       case 'bold':
         nodes.push(

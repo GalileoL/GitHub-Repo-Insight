@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { ScoredChunk, Source, AskResponse, QueryAnchors } from '../types.js';
+import { isAllowedHttpUrl, parseAllowedOriginPatterns } from '../security/url-safety.js';
 
 /** Supported LLM providers */
 type LLMProvider = 'openai' | 'deepseek' | 'groq' | 'gemini' | 'claude';
@@ -65,12 +66,16 @@ export function buildContextText(chunks: ScoredChunk[]): string {
 }
 
 export function buildSources(chunks: ScoredChunk[]): Source[] {
+  const allowedPatterns = parseAllowedOriginPatterns(process.env.RAG_ALLOWED_URL_ORIGIN_PATTERNS);
+
   return chunks.map((sc) => {
     const m = sc.chunk.metadata;
+    const safeUrl = isAllowedHttpUrl(m.githubUrl, allowedPatterns) ? m.githubUrl : '';
+
     return {
       type: m.type,
       title: m.title,
-      url: m.githubUrl,
+      url: safeUrl,
       issueNumber: m.issueNumber,
       prNumber: m.prNumber,
       releaseName: m.releaseName,

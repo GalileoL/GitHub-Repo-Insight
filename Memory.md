@@ -158,6 +158,7 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - `src/features/rag/components/AnswerCard.tsx`:
   - Renders markdown blocks into React elements via `renderBlocks`.
   - Supports inline markdown via `renderMarkdownInline`.
+  - Applies URL allowlist checks before rendering markdown links/images as clickable/loaded content.
   - Supports:
     - fenced code blocks ```lang (syntax highlighted via Prism.js)
     - bold `**text**`, italic `*text*`
@@ -168,6 +169,7 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
     - blockquotes (`> quote`)
   - Provides copy-to-clipboard on code blocks + download-as-markdown button in UI.
 - This is intentionally constrained for controlled LLM output; avoids a full markdown renderer.
+- Server-side sources are URL-sanitized in `lib/rag/llm/index.ts` before SSE/non-stream responses; blocked URLs are downgraded to empty strings and rendered as non-clickable in `SourceList`.
 
 ## 8) Stream Interruption / Robustness Status (UPDATED: Phase 1 Complete)
 - ✅ Implemented on Phase 1:
@@ -215,6 +217,9 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - Provider switch:
   - `LLM_PROVIDER` in `openai|deepseek|groq|gemini|claude`
   - matching provider key env var
+- URL allowlists:
+  - `RAG_ALLOWED_URL_ORIGIN_PATTERNS` (server-side source URL validation)
+  - `VITE_ALLOWED_URL_ORIGIN_PATTERNS` (frontend markdown/source rendering validation)
 - Quota and admin:
   - `RAG_DAILY_LIMIT`
   - `RAG_DAILY_INGEST_LIMIT`
