@@ -27,26 +27,10 @@ describe('executeAnalyticsQuery', () => {
   });
 
   it('filters merged PRs by merged_at, not created_at', async () => {
-    mockedGhFetch
-      .mockResolvedValueOnce([
-        {
-          number: 1,
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-03-10T12:00:00Z',
-          merged_at: '2024-03-10T12:00:00Z',
-          state: 'closed',
-          user: { login: 'alice' },
-        },
-        {
-          number: 2,
-          created_at: '2024-03-03T00:00:00Z',
-          updated_at: '2024-04-02T00:00:00Z',
-          merged_at: '2024-04-02T00:00:00Z',
-          state: 'closed',
-          user: { login: 'bob' },
-        },
-      ])
-      .mockResolvedValueOnce([]);
+    mockedGhFetch.mockResolvedValueOnce({
+      total_count: 1,
+      incomplete_results: false,
+    });
 
     const query = makeQuery({
       entity: 'pr',
@@ -59,32 +43,20 @@ describe('executeAnalyticsQuery', () => {
 
     const result = await executeAnalyticsQuery('owner/repo', query);
 
-    expect(mockedGhFetch.mock.calls[0][0]).toContain('sort=updated');
+  const searchPath = decodeURIComponent(mockedGhFetch.mock.calls[0][0]);
+  expect(searchPath).toContain('/search/issues?q=');
+  expect(searchPath).toContain('is:pr');
+  expect(searchPath).toContain('is:merged');
+  expect(searchPath).toContain('merged:2024-03-01T00:00:00Z..2024-03-31T23:59:59Z');
     expect(result.data.count).toBe(1);
     expect(result.answer).toContain('Found **1** merged pull request');
   });
 
   it('filters closed issues by closed_at, not created_at', async () => {
-    mockedGhFetch
-      .mockResolvedValueOnce([
-        {
-          number: 11,
-          created_at: '2024-01-05T00:00:00Z',
-          updated_at: '2024-03-08T00:00:00Z',
-          closed_at: '2024-03-08T00:00:00Z',
-          state: 'closed',
-          user: { login: 'alice' },
-        },
-        {
-          number: 12,
-          created_at: '2024-03-10T00:00:00Z',
-          updated_at: '2024-04-01T00:00:00Z',
-          closed_at: '2024-04-01T00:00:00Z',
-          state: 'closed',
-          user: { login: 'bob' },
-        },
-      ])
-      .mockResolvedValueOnce([]);
+    mockedGhFetch.mockResolvedValueOnce({
+      total_count: 1,
+      incomplete_results: false,
+    });
 
     const query = makeQuery({
       entity: 'issue',
@@ -97,9 +69,60 @@ describe('executeAnalyticsQuery', () => {
 
     const result = await executeAnalyticsQuery('owner/repo', query);
 
-    expect(mockedGhFetch.mock.calls[0][0]).toContain('sort=updated');
+  const searchPath = decodeURIComponent(mockedGhFetch.mock.calls[0][0]);
+  expect(searchPath).toContain('/search/issues?q=');
+  expect(searchPath).toContain('is:issue');
+  expect(searchPath).toContain('is:closed');
+  expect(searchPath).toContain('closed:2024-03-01T00:00:00Z..2024-03-31T23:59:59Z');
     expect(result.data.count).toBe(1);
     expect(result.answer).toContain('Found **1** closed issue');
+  });
+
+  it('marks count results as possibly incomplete when search reports incomplete_results', async () => {
+    mockedGhFetch.mockResolvedValueOnce({
+      total_count: 1547,
+      incomplete_results: true,
+    });
+
+    const query = makeQuery({
+      entity: 'issue',
+      state: 'all',
+      dateRange: {
+        since: '2026-03-16T00:00:00Z',
+        until: '2026-04-16T23:59:59Z',
+      },
+    });
+
+    const result = await executeAnalyticsQuery('owner/repo', query);
+
+    expect(result.data.count).toBe(1547);
+    expect(result.data.truncated).toBe(true);
+    expect(result.answer).toContain('GitHub Search API limits');
+  });
+
+  it('uses open-state issue/pr search qualifiers without date filters when dateRange is null', async () => {
+    mockedGhFetch.mockResolvedValueOnce({
+      total_count: 42,
+      incomplete_results: false,
+    });
+
+    const query = makeQuery({
+      entity: 'pr',
+      state: 'open',
+      dateRange: null,
+    });
+
+    const result = await executeAnalyticsQuery('owner/repo', query);
+
+    const searchPath = decodeURIComponent(mockedGhFetch.mock.calls[0][0]);
+    expect(searchPath).toContain('/search/issues?q=');
+    expect(searchPath).toContain('repo:owner/repo');
+    expect(searchPath).toContain('is:pr');
+    expect(searchPath).toContain('is:open');
+    expect(searchPath).not.toContain('created:');
+    expect(searchPath).not.toContain('closed:');
+    expect(searchPath).not.toContain('merged:');
+    expect(result.data.count).toBe(42);
   });
 
   it('does not emit invalid commit state wording', async () => {
@@ -126,5 +149,33 @@ describe('executeAnalyticsQuery', () => {
 
     expect(result.answer).toContain('Found **1** commit');
     expect(result.answer).not.toContain('closed commit');
+  });
+
+  it('uses pagination-limit wording when commit count hits MAX_PAGES', async () => {
+    const batch = Array.from({ length: 100 }, (_, i) => ({
+      sha: `sha-${i}`,
+      commit: {
+        author: {
+          name: 'alice',
+          date: '2024-03-05T00:00:00Z',
+        },
+      },
+    }));
+
+    for (let i = 0; i < 30; i++) {
+      mockedGhFetch.mockResolvedValueOnce(batch);
+    }
+    mockedGhFetch.mockResolvedValueOnce([]);
+
+    const query = makeQuery({
+      entity: 'commit',
+      state: 'all',
+      dateRange: null,
+    });
+
+    const result = await executeAnalyticsQuery('owner/repo', query);
+
+    expect(result.data.truncated).toBe(true);
+    expect(result.answer).toContain('pagination limit');
   });
 });

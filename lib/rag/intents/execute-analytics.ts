@@ -29,6 +29,11 @@ interface GitHubCommitItem {
   commit: { author: { name: string; date: string } | null };
 }
 
+interface GitHubSearchIssuesResponse {
+  total_count: number;
+  incomplete_results: boolean;
+}
+
 function isInRange(dateStr: string, range: DateRange | null): boolean {
   if (!range) return true;
   return dateStr >= range.since && dateStr <= range.until;
@@ -151,6 +156,48 @@ async function fetchCommits(
   return { items, truncated };
 }
 
+function getSearchDateField(query: AnalyticsQuery): 'created' | 'closed' | 'merged' {
+  if (query.entity === 'issue' && query.state === 'closed') return 'closed';
+  if (query.entity === 'pr' && query.state === 'merged') return 'merged';
+  return 'created';
+}
+
+function buildSearchQuery(repo: string, query: AnalyticsQuery): string {
+  const terms: string[] = [`repo:${repo}`, query.entity === 'issue' ? 'is:issue' : 'is:pr'];
+
+  if (query.entity === 'pr' && query.state === 'merged') {
+    terms.push('is:merged');
+  } else if (query.state === 'open') {
+    terms.push('is:open');
+  } else if (query.state === 'closed') {
+    terms.push('is:closed');
+  }
+
+  if (query.dateRange) {
+    const field = getSearchDateField(query);
+    terms.push(`${field}:${query.dateRange.since}..${query.dateRange.until}`);
+  }
+
+  return terms.join(' ');
+}
+
+async function fetchIssueOrPRCountBySearch(
+  repo: string,
+  query: AnalyticsQuery,
+  token?: string,
+): Promise<{ count: number; truncated: boolean }> {
+  const searchQuery = buildSearchQuery(repo, query);
+  const data = await ghFetch<GitHubSearchIssuesResponse>(
+    `/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=1`,
+    token,
+  );
+
+  return {
+    count: data.total_count,
+    truncated: data.incomplete_results,
+  };
+}
+
 // ═══ Top Authors Aggregation ═════════════════════════════════
 
 function getAuthorFromPROrIssue(item: GitHubPRItem | GitHubIssueItem): string {
@@ -205,7 +252,11 @@ function formatCountAnswer(
   const label = count === 1 ? ENTITY_LABELS[query.entity].singular : ENTITY_LABELS[query.entity].plural;
   const stateStr = formatState(query.state, query.entity);
   const dateStr = formatDateRange(query.dateRange);
-  const truncNote = truncated ? '\n\n> Note: results may be incomplete — the query reached the pagination limit.' : '';
+  const truncNote = truncated
+    ? query.entity === 'pr' || query.entity === 'issue'
+      ? '\n\n> Note: results may be incomplete due to GitHub Search API limits.'
+      : '\n\n> Note: results may be incomplete — the query reached the pagination limit.'
+    : '';
 
   return `Found **${count}**${stateStr} ${label}${dateStr}.${truncNote}`;
 }
@@ -219,7 +270,9 @@ function formatTopAuthorsAnswer(
   const label = ENTITY_LABELS[query.entity].plural;
   const stateStr = formatState(query.state, query.entity);
   const dateStr = formatDateRange(query.dateRange);
-  const truncNote = truncated ? '\n\n> Note: results may be incomplete — the query reached the pagination limit.' : '';
+  const truncNote = truncated
+    ? '\n\n> Note: results may be incomplete — the query reached the pagination limit.'
+    : '';
 
   const lines = [`Top contributors by${stateStr} ${label}${dateStr} (${totalCount} total):\n`];
   lines.push('| Rank | Author | Count |');
@@ -247,17 +300,29 @@ export async function executeAnalyticsQuery(
 
   switch (query.entity) {
     case 'pr': {
-      const result = await fetchPRs(repo, query, token);
-      count = result.items.length;
-      truncated = result.truncated;
-      if (query.op === 'top_authors') authors = result.items.map(getAuthorFromPROrIssue);
+      if (query.op === 'count') {
+        const result = await fetchIssueOrPRCountBySearch(repo, query, token);
+        count = result.count;
+        truncated = result.truncated;
+      } else {
+        const result = await fetchPRs(repo, query, token);
+        count = result.items.length;
+        truncated = result.truncated;
+        authors = result.items.map(getAuthorFromPROrIssue);
+      }
       break;
     }
     case 'issue': {
-      const result = await fetchIssues(repo, query, token);
-      count = result.items.length;
-      truncated = result.truncated;
-      if (query.op === 'top_authors') authors = result.items.map(getAuthorFromPROrIssue);
+      if (query.op === 'count') {
+        const result = await fetchIssueOrPRCountBySearch(repo, query, token);
+        count = result.count;
+        truncated = result.truncated;
+      } else {
+        const result = await fetchIssues(repo, query, token);
+        count = result.items.length;
+        truncated = result.truncated;
+        authors = result.items.map(getAuthorFromPROrIssue);
+      }
       break;
     }
     case 'commit': {
