@@ -145,19 +145,24 @@ function parseSessionCookie(req: VercelRequest): GitHubSessionPayload | null {
 
 /** Check whether a specific session or all sessions for a user have been revoked. */
 async function isSessionRevoked(payload: GitHubSessionPayload): Promise<boolean> {
-  const r = getRedis();
+  try {
+    const r = getRedis();
 
-  // Check individual session revocation
-  if (payload.sessionId) {
-    const revoked = await r.get<string>(`auth:revoked:sid:${payload.sessionId}`);
-    if (revoked) return true;
+    // Check individual session revocation
+    if (payload.sessionId) {
+      const revoked = await r.get<string>(`auth:revoked:sid:${payload.sessionId}`);
+      if (revoked) return true;
+    }
+
+    // Check bulk revocation (all sessions issued before a timestamp)
+    const revokedBefore = await r.get<number>(`auth:revoked:user:${payload.login.toLowerCase()}`);
+    if (revokedBefore && payload.issuedAt < revokedBefore) return true;
+
+    return false;
+  } catch {
+    // Fail-open to avoid auth outage when Redis is temporarily unavailable.
+    return false;
   }
-
-  // Check bulk revocation (all sessions issued before a timestamp)
-  const revokedBefore = await r.get<number>(`auth:revoked:user:${payload.login.toLowerCase()}`);
-  if (revokedBefore && payload.issuedAt < revokedBefore) return true;
-
-  return false;
 }
 
 /** Revoke a single session by its sessionId. */
@@ -426,29 +431,38 @@ function getClientIp(req: VercelRequest): string {
 
 /** IP-based rate limiting applied before authentication to prevent brute-force. */
 export async function checkIpRateLimit(req: VercelRequest): Promise<RateLimitResult> {
-  const ip = getClientIp(req);
-  const r = getRedis();
-  const key = `auth:ip:${ip}`;
+  try {
+    const ip = getClientIp(req);
+    const r = getRedis();
+    const key = `auth:ip:${ip}`;
 
-  const next = await r.incr(key);
-  if (next === 1) {
-    await r.expire(key, IP_RATE_WINDOW_SECONDS);
-  }
+    const next = await r.incr(key);
+    if (next === 1) {
+      await r.expire(key, IP_RATE_WINDOW_SECONDS);
+    }
 
-  if (next > IP_RATE_LIMIT) {
+    if (next > IP_RATE_LIMIT) {
+      return {
+        allowed: false,
+        remaining: 0,
+        limit: IP_RATE_LIMIT,
+        error: 'Too many requests. Please try again later.',
+      };
+    }
+
     return {
-      allowed: false,
-      remaining: 0,
+      allowed: true,
+      remaining: IP_RATE_LIMIT - next,
       limit: IP_RATE_LIMIT,
-      error: 'Too many requests. Please try again later.',
+    };
+  } catch {
+    // Fail-open to avoid turning Redis outages into global auth failures.
+    return {
+      allowed: true,
+      remaining: IP_RATE_LIMIT,
+      limit: IP_RATE_LIMIT,
     };
   }
-
-  return {
-    allowed: true,
-    remaining: IP_RATE_LIMIT - next,
-    limit: IP_RATE_LIMIT,
-  };
 }
 
 /** Check and increment the daily usage counter for a user */
