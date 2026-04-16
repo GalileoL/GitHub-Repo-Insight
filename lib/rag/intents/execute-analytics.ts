@@ -252,7 +252,11 @@ function formatCountAnswer(
   const label = count === 1 ? ENTITY_LABELS[query.entity].singular : ENTITY_LABELS[query.entity].plural;
   const stateStr = formatState(query.state, query.entity);
   const dateStr = formatDateRange(query.dateRange);
-  const truncNote = truncated ? '\n\n> Note: results may be incomplete due to API limits.' : '';
+  const truncNote = truncated
+    ? query.entity === 'pr' || query.entity === 'issue'
+      ? '\n\n> Note: results may be incomplete due to GitHub Search API limits.'
+      : '\n\n> Note: results may be incomplete — the query reached the pagination limit.'
+    : '';
 
   return `Found **${count}**${stateStr} ${label}${dateStr}.${truncNote}`;
 }
@@ -266,7 +270,9 @@ function formatTopAuthorsAnswer(
   const label = ENTITY_LABELS[query.entity].plural;
   const stateStr = formatState(query.state, query.entity);
   const dateStr = formatDateRange(query.dateRange);
-  const truncNote = truncated ? '\n\n> Note: results may be incomplete due to API limits.' : '';
+  const truncNote = truncated
+    ? '\n\n> Note: results may be incomplete — the query reached the pagination limit.'
+    : '';
 
   const lines = [`Top contributors by${stateStr} ${label}${dateStr} (${totalCount} total):\n`];
   lines.push('| Rank | Author | Count |');
