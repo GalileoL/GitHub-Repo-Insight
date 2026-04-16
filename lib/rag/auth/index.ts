@@ -31,7 +31,9 @@ interface AuditLogEntry {
 
 export function logAuthEvent(req: VercelRequest, event: AuthAuditEvent, extra?: Partial<Pick<AuditLogEntry, 'login' | 'sessionId' | 'detail'>>): void {
   const forwarded = req.headers['x-forwarded-for'];
-  const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0]?.trim() || '0.0.0.0';
+  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0]?.trim();
+  const remoteAddress = req.socket?.remoteAddress?.trim();
+  const ip = first || remoteAddress || '0.0.0.0';
   const entry: AuditLogEntry = {
     category: 'auth_audit',
     event,
@@ -193,7 +195,11 @@ function setSessionCookie(res: VercelResponse, payload: GitHubSessionPayload): v
 export async function clearGitHubSession(req: VercelRequest, res: VercelResponse): Promise<void> {
   const payload = parseSessionCookie(req);
   if (payload?.sessionId) {
-    await revokeSession(payload.sessionId);
+    try {
+      await revokeSession(payload.sessionId);
+    } catch {
+      // Keep logout resilient even when Redis is unavailable.
+    }
   }
   logAuthEvent(req, 'logout', { login: payload?.login, sessionId: payload?.sessionId });
   appendSetCookie(res, buildClearCookie(GITHUB_SESSION_COOKIE));
@@ -339,7 +345,12 @@ export async function verifyGitHubToken(token: string | undefined): Promise<Auth
   const r = getRedis();
 
   // Check cache first
-  const cached = await r.get<string>(cacheKey);
+  let cached: string | null = null;
+  try {
+    cached = await r.get<string>(cacheKey);
+  } catch {
+    // Cache failures should not block auth; continue with GitHub verification.
+  }
   if (cached) {
     const isAdmin = ADMIN_USERS.has(cached.toLowerCase());
     return { authenticated: true, login: cached, isAdmin };
@@ -362,7 +373,11 @@ export async function verifyGitHubToken(token: string | undefined): Promise<Auth
     const isAdmin = ADMIN_USERS.has(login.toLowerCase());
 
     // Cache successful verification
-    await r.set(cacheKey, login, { ex: TOKEN_VERIFY_CACHE_TTL });
+    try {
+      await r.set(cacheKey, login, { ex: TOKEN_VERIFY_CACHE_TTL });
+    } catch {
+      // Cache write failures are non-fatal.
+    }
 
     return { authenticated: true, login, isAdmin };
   } catch {
@@ -405,7 +420,8 @@ const IP_RATE_WINDOW_SECONDS = 900; // 15 minutes
 function getClientIp(req: VercelRequest): string {
   const forwarded = req.headers['x-forwarded-for'];
   const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0]?.trim();
-  return first || '0.0.0.0';
+  const remoteAddress = req.socket?.remoteAddress?.trim();
+  return first || remoteAddress || '0.0.0.0';
 }
 
 /** IP-based rate limiting applied before authentication to prevent brute-force. */

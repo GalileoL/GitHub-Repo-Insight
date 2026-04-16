@@ -71,10 +71,14 @@ export function verifySignedPayload<T>(value: string | undefined): T | null {
   const signature = value.slice(idx + 1);
   if (!body || !signature) return null;
   const expected = sign(body);
-  if (expected.length !== signature.length) return null;
   const a = Buffer.from(expected, 'utf8');
   const b = Buffer.from(signature, 'utf8');
-  if (!timingSafeEqual(a, b)) return null;
+  if (a.length !== b.length) return null;
+  try {
+    if (!timingSafeEqual(a, b)) return null;
+  } catch {
+    return null;
+  }
 
   // New encrypted format: iv.ciphertext.tag (3 dot-separated parts in body)
   const dotCount = body.split('.').length - 1;

@@ -8,6 +8,11 @@ const DEFAULT_ALLOWED_ORIGIN_PATTERNS = [
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
+export interface CompiledOriginPattern {
+  isOriginPattern: boolean;
+  regex: RegExp;
+}
+
 function hasControlChars(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
     const code = value.charCodeAt(i);
@@ -25,6 +30,13 @@ function toPatternRegex(pattern: string): RegExp {
   return new RegExp(`^${escaped}$`, 'i');
 }
 
+export function compileAllowedOriginPatterns(patterns: string[]): CompiledOriginPattern[] {
+  return patterns.map((pattern) => ({
+    isOriginPattern: pattern.includes('://'),
+    regex: toPatternRegex(pattern),
+  }));
+}
+
 export function parseAllowedOriginPatterns(raw: string | undefined): string[] {
   const parsed = (raw ?? '')
     .split(',')
@@ -35,6 +47,11 @@ export function parseAllowedOriginPatterns(raw: string | undefined): string[] {
 }
 
 export function isAllowedHttpUrl(rawUrl: string, allowedOriginPatterns: string[]): boolean {
+  const compiledPatterns = compileAllowedOriginPatterns(allowedOriginPatterns);
+  return isAllowedHttpUrlWithCompiledPatterns(rawUrl, compiledPatterns);
+}
+
+export function isAllowedHttpUrlWithCompiledPatterns(rawUrl: string, compiledPatterns: CompiledOriginPattern[]): boolean {
   if (!rawUrl || typeof rawUrl !== 'string') return false;
   if (hasControlChars(rawUrl)) return false;
 
@@ -51,9 +68,8 @@ export function isAllowedHttpUrl(rawUrl: string, allowedOriginPatterns: string[]
   const origin = parsed.origin;
   const hostname = parsed.hostname;
 
-  return allowedOriginPatterns.some((pattern) => {
-    const isOriginPattern = pattern.includes('://');
-    const valueToCheck = isOriginPattern ? origin : hostname;
-    return toPatternRegex(pattern).test(valueToCheck);
+  return compiledPatterns.some((pattern) => {
+    const valueToCheck = pattern.isOriginPattern ? origin : hostname;
+    return pattern.regex.test(valueToCheck);
   });
 }

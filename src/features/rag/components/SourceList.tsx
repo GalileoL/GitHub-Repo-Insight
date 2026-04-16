@@ -1,7 +1,11 @@
 import { useState, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Source } from '../types';
-import { getRuntimeAllowedOriginPatterns, isAllowedHttpUrl } from '../../../utils/url-safety';
+import {
+  compileAllowedOriginPatterns,
+  getRuntimeAllowedOriginPatterns,
+  isAllowedHttpUrlWithCompiledPatterns,
+} from '../../../utils/url-safety';
 
 const TYPE_ICON: Record<string, string> = {
   readme: '📄',
@@ -25,7 +29,10 @@ interface SourceListProps {
 
 export default function SourceList({ sources }: SourceListProps) {
   const [open, setOpen] = useState(false);
-  const allowedOriginPatterns = useMemo(() => getRuntimeAllowedOriginPatterns(), []);
+  const compiledAllowedOriginPatterns = useMemo(
+    () => compileAllowedOriginPatterns(getRuntimeAllowedOriginPatterns()),
+    [],
+  );
 
   const safeSources = useMemo(() => (Array.isArray(sources) ? sources : []), [sources]);
 
@@ -83,7 +90,7 @@ export default function SourceList({ sources }: SourceListProps) {
             <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                 const source = displaySources[virtualRow.index];
-                const isSafeUrl = isAllowedHttpUrl(source.url, allowedOriginPatterns);
+                const isSafeUrl = isAllowedHttpUrlWithCompiledPatterns(source.url, compiledAllowedOriginPatterns);
                 return (
                   <div
                     key={virtualRow.key}
