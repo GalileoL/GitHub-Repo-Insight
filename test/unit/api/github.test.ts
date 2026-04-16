@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 
 import handler from '../../../api/github.js';
+import { _resetRedis } from '../../../lib/rag/auth/index.js';
 
 function makeHeaders(values: Record<string, string> = {}) {
   return {
@@ -75,6 +76,9 @@ describe('api/github proxy', () => {
     originalFetch = globalThis.fetch;
     originalEnv = { ...process.env };
     process.env.AUTH_SESSION_SECRET = 'test-secret';
+    process.env.UPSTASH_REDIS_REST_URL = 'https://fake-redis.upstash.io';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'fake-token';
+    _resetRedis();
   });
 
   afterEach(() => {
@@ -85,6 +89,13 @@ describe('api/github proxy', () => {
 
   it('forwards GET requests to GitHub with the server token', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      // Handle Upstash Redis pipeline requests (session revocation / IP rate limit checks)
+      if (String(_url).includes('/pipeline')) {
+        let cmdCount = 1;
+        try { cmdCount = (JSON.parse(String(init?.body ?? '[]')) as unknown[]).length; } catch { /* fallback */ }
+        const results = Array.from({ length: cmdCount }, () => ({ result: null }));
+        return { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), json: async () => results, text: async () => JSON.stringify(results) } as Response;
+      }
       expect(_url).toBe('https://api.github.com/repos/owner/repo');
       const headers = Object.fromEntries(new Headers(init?.headers as HeadersInit).entries());
       expect(headers.authorization).toBe('Bearer server-token-123');
@@ -127,6 +138,12 @@ describe('api/github proxy', () => {
 
   it('forwards GraphQL POST requests with query and variables only', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (String(_url).includes('/pipeline')) {
+        let cmdCount = 1;
+        try { cmdCount = (JSON.parse(String(init?.body ?? '[]')) as unknown[]).length; } catch { /* fallback */ }
+        const results = Array.from({ length: cmdCount }, () => ({ result: null }));
+        return { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), json: async () => results, text: async () => JSON.stringify(results) } as Response;
+      }
       expect(_url).toBe('https://api.github.com/graphql');
       const headers = Object.fromEntries(new Headers(init?.headers as HeadersInit).entries());
       expect(headers.authorization).toBe('Bearer server-token-123');

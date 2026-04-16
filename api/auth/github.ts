@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { buildClearCookie, parseCookieHeader, verifySignedPayload } from '../../lib/rag/auth/cookies.js';
-import { establishGitHubSession } from '../../lib/rag/auth/index.js';
+import { establishGitHubSession, logAuthEvent } from '../../lib/rag/auth/index.js';
 
 const OAUTH_FLOW_COOKIE = 'gh_oauth_flow';
 const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
@@ -139,6 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     await establishGitHubSession(res, data, user);
     appendSetCookie(res, buildClearCookie(OAUTH_FLOW_COOKIE));
+    logAuthEvent(req, 'login', { login: user.login });
 
     return res.status(200).json({
       user: {

@@ -1,11 +1,8 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const FALLBACK_MAX_AGE_SECONDS = 60 * 15;
 
-function base64UrlEncode(input: string): string {
-  return Buffer.from(input, 'utf8').toString('base64url');
-}
-
+/** Decode legacy (unencrypted) cookie payloads during migration. */
 function base64UrlDecode(input: string): string {
   return Buffer.from(input, 'base64url').toString('utf8');
 }
@@ -18,27 +15,82 @@ function getSigningSecret(): string {
   return secret;
 }
 
+/** Derive a fixed 32-byte key from the secret for AES-256-GCM. */
+function deriveEncryptionKey(): Buffer {
+  return createHash('sha256').update(getSigningSecret()).digest();
+}
+
+function encrypt(plaintext: string): string {
+  const key = deriveEncryptionKey();
+  const iv = randomBytes(12); // 96-bit IV for GCM
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag(); // 16 bytes
+  // Format: <iv>.<ciphertext>.<authTag>  (all base64url)
+  return `${iv.toString('base64url')}.${encrypted.toString('base64url')}.${tag.toString('base64url')}`;
+}
+
+function decrypt(sealed: string): string | null {
+  const parts = sealed.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const iv = Buffer.from(parts[0], 'base64url');
+    const encrypted = Buffer.from(parts[1], 'base64url');
+    const tag = Buffer.from(parts[2], 'base64url');
+    if (iv.length !== 12 || tag.length !== 16) return null;
+
+    const key = deriveEncryptionKey();
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    return decrypted.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 function sign(value: string): string {
   return createHmac('sha256', getSigningSecret()).update(value).digest('base64url');
 }
 
 export function createSignedPayload(payload: Record<string, unknown>): string {
-  const encoded = base64UrlEncode(JSON.stringify(payload));
-  return `${encoded}.${sign(encoded)}`;
+  const sealed = encrypt(JSON.stringify(payload));
+  return `${sealed}.${sign(sealed)}`;
 }
 
+/**
+ * Verify and decrypt a signed+encrypted payload.
+ * Also accepts legacy sign-only format for backward compatibility during rollout.
+ */
 export function verifySignedPayload<T>(value: string | undefined): T | null {
   if (!value) return null;
   const idx = value.lastIndexOf('.');
   if (idx <= 0) return null;
 
-  const encoded = value.slice(0, idx);
+  const body = value.slice(0, idx);
   const signature = value.slice(idx + 1);
-  if (!encoded || !signature) return null;
-  if (sign(encoded) !== signature) return null;
+  if (!body || !signature) return null;
+  const expected = sign(body);
+  if (expected.length !== signature.length) return null;
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(signature, 'utf8');
+  if (!timingSafeEqual(a, b)) return null;
 
+  // New encrypted format: iv.ciphertext.tag (3 dot-separated parts in body)
+  const dotCount = body.split('.').length - 1;
+  if (dotCount === 2) {
+    const plaintext = decrypt(body);
+    if (!plaintext) return null;
+    try {
+      return JSON.parse(plaintext) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  // Legacy unencrypted format: base64url payload (no dots in body)
   try {
-    const decoded = base64UrlDecode(encoded);
+    const decoded = base64UrlDecode(body);
     return JSON.parse(decoded) as T;
   } catch {
     return null;
