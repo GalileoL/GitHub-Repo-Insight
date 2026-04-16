@@ -1,5 +1,12 @@
 import React from 'react';
-import { getRuntimeAllowedOriginPatterns, isAllowedHttpUrl } from './url-safety';
+import {
+  compileAllowedOriginPatterns,
+  getRuntimeAllowedOriginPatterns,
+  isAllowedHttpUrlWithCompiledPatterns,
+} from './url-safety';
+
+const RUNTIME_ALLOWED_ORIGIN_PATTERNS = getRuntimeAllowedOriginPatterns();
+const COMPILED_RUNTIME_ALLOWED_ORIGIN_PATTERNS = compileAllowedOriginPatterns(RUNTIME_ALLOWED_ORIGIN_PATTERNS);
 
 export type MarkdownBlock =
   | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; content: string }
@@ -197,7 +204,6 @@ export function renderMarkdownInline(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   let remaining = text;
   let key = 0;
-  const allowedOriginPatterns = getRuntimeAllowedOriginPatterns();
 
   const patterns = [
     { type: 'image', regex: /!\[([^\]]*)\]\(([^)]+)\)/ },
@@ -234,7 +240,7 @@ export function renderMarkdownInline(text: string): React.ReactNode[] {
     const [full, a, b] = match;
     switch (matchType) {
       case 'image':
-        if (isAllowedHttpUrl(b, allowedOriginPatterns)) {
+        if (isAllowedHttpUrlWithCompiledPatterns(b, COMPILED_RUNTIME_ALLOWED_ORIGIN_PATTERNS)) {
           nodes.push(
             <img
               key={key++}
@@ -253,7 +259,7 @@ export function renderMarkdownInline(text: string): React.ReactNode[] {
         }
         break;
       case 'link':
-        if (isAllowedHttpUrl(b, allowedOriginPatterns)) {
+        if (isAllowedHttpUrlWithCompiledPatterns(b, COMPILED_RUNTIME_ALLOWED_ORIGIN_PATTERNS)) {
           nodes.push(
             <a
               key={key++}
