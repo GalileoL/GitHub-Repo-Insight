@@ -98,6 +98,8 @@ cp .env.example .env
 | `GROQ_API_KEY` | Groq API key (required when `LLM_PROVIDER=groq`) |
 | `GEMINI_API_KEY` | Google Gemini API key (required when `LLM_PROVIDER=gemini`) |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key (required when `LLM_PROVIDER=claude`) |
+| `RAG_ALLOWED_URL_ORIGIN_PATTERNS` | Server-side allowlist for source URLs in RAG responses. Comma-separated origin/host patterns, e.g. `https://github.com,https://*.githubusercontent.com` |
+| `VITE_ALLOWED_URL_ORIGIN_PATTERNS` | Frontend allowlist for markdown links/images and source links in Ask Repo UI. Comma-separated origin/host patterns |
 | `RAG_DAILY_LIMIT` | Max questions per user per day (default: `20`) |
 | `RAG_DAILY_INGEST_LIMIT` | Max index/re-index operations per user per day (default: `5`) |
 | `ADMIN_GITHUB_USERS` | Comma-separated GitHub usernames with unlimited usage |
@@ -216,6 +218,9 @@ lib/
     - bold (`**text**`)
     - inline code (`` `code` ``)
     - source tokens (`[Source N]`)
+- Security hardening:
+    - Source URLs are validated server-side before SSE/JSON response emission.
+    - Markdown links/images are validated client-side against an allowlist before rendering as clickable/loaded content.
 
 ### Share links
 
