@@ -62,6 +62,7 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
           question,
           answer: ask.streamingAnswer,
           sources: ask.sources,
+          requestId: ask.getRequestId(),
         }),
       });
 
@@ -331,6 +332,8 @@ export default function AskRepoPanel({ owner, repo }: AskRepoPanelProps) {
                 onRetry={ask.retry}
                 onShare={!isSharing ? handleShare : undefined}
                 onEdit={ask.setAnswer}
+                onThumbsUp={ask.sendThumbsUp}
+                onThumbsDown={ask.sendThumbsDown}
               />
               {ask.sources.length > 0 && <SourceList sources={ask.sources} />}
               {ask.streamStatus === 'cancelled' && ask.streamError && (

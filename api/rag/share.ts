@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { authenticateRequest } from '../../lib/rag/auth/index.js';
-import { setShareEntry } from '../../lib/rag/storage/index.js';
+import { setShareEntry, writeEvalFeedback } from '../../lib/rag/storage/index.js';
 import type { ChunkType, Source } from '../../lib/rag/types.js';
 import {
   compileAllowedOriginPatterns,
@@ -63,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: auth.error });
   }
 
-  const { repo, question, answer, sources } = req.body ?? {};
+  const { repo, question, answer, sources, requestId } = req.body ?? {};
   if (!repo || !question || !answer) {
     return res.status(400).json({ error: 'Missing repo, question, or answer' });
   }
@@ -87,6 +87,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   await setShareEntry(entry);
+  if (typeof requestId === 'string' && requestId) {
+    await writeEvalFeedback(requestId, { shareCreated: true, shareId });
+  }
 
   return res.status(200).json({ id: shareId, url: `/share/${shareId}` });
 }

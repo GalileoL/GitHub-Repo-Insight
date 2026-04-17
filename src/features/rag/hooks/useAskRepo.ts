@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { askRepoStream } from '../api/rag';
+import { askRepoStream, submitEvalFeedback } from '../api/rag';
 import { useAskHistory } from './useAskHistory';
 import type { Source } from '../types';
 
@@ -224,6 +224,10 @@ export function useAskRepo(repo: string) {
     // Reset retry counter when user manually triggers retry
     retryCountRef.current = 0;
 
+    if (requestIdRef.current) {
+      void submitEvalFeedback(requestIdRef.current, { userRetried: true }).catch(() => {});
+    }
+
     // If we have an active request ID, try resuming the previous stream
     if (requestIdRef.current) {
       // Start a new abort controller for the resumed stream
@@ -342,6 +346,16 @@ export function useAskRepo(repo: string) {
     setStreamingAnswer(text);
   }, []);
 
+  const sendFeedback = useCallback((kind: 'thumbsUp' | 'thumbsDown') => {
+    if (!requestIdRef.current) return;
+    void submitEvalFeedback(requestIdRef.current, {
+      thumbsUp: kind === 'thumbsUp',
+      thumbsDown: kind === 'thumbsDown',
+    }).catch(() => {});
+  }, []);
+
+  const getRequestId = useCallback(() => requestIdRef.current, []);
+
   return {
     ask: mutation.mutate,
     showCached,
@@ -362,5 +376,8 @@ export function useAskRepo(repo: string) {
     history,
     updateEntry,
     clearHistory: clearAllHistory,
+    getRequestId,
+    sendThumbsUp: () => sendFeedback('thumbsUp'),
+    sendThumbsDown: () => sendFeedback('thumbsDown'),
   };
 }

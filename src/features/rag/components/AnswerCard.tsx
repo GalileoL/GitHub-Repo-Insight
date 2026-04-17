@@ -22,6 +22,8 @@ interface AnswerCardProps {
   onRetry?: () => void;
   onShare?: () => void;
   onEdit?: (answer: string) => void;
+  onThumbsUp?: () => void;
+  onThumbsDown?: () => void;
 }
 
 function renderDiffNodes(parts: Array<{ added?: boolean; removed?: boolean; value: string }>) {
@@ -40,7 +42,18 @@ function renderDiffNodes(parts: Array<{ added?: boolean; removed?: boolean; valu
   });
 }
 
-export default function AnswerCard({ answer, previousAnswer, isLoading, streamStatus = 'idle', onCancel, onRetry, onShare, onEdit }: AnswerCardProps) {
+export default function AnswerCard({
+  answer,
+  previousAnswer,
+  isLoading,
+  streamStatus = 'idle',
+  onCancel,
+  onRetry,
+  onShare,
+  onEdit,
+  onThumbsUp,
+  onThumbsDown,
+}: AnswerCardProps) {
   const isStreaming = streamStatus === 'streaming' || streamStatus === 'connecting' || streamStatus === 'reconnecting';
   const [editing, setEditing] = useState(false);
   const [editedText, setEditedText] = useState('');
@@ -213,6 +226,22 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
                   className="text-xs text-text-muted hover:text-accent-teal transition-colors px-2 py-0.5 rounded hover:bg-accent-teal/10"
                 >
                   Edit
+                </button>
+              )}
+              {!isStreaming && onThumbsUp && (
+                <button
+                  onClick={onThumbsUp}
+                  className="text-xs text-text-muted hover:text-accent-green transition-colors px-2 py-0.5 rounded hover:bg-accent-green/10"
+                >
+                  Helpful
+                </button>
+              )}
+              {!isStreaming && onThumbsDown && (
+                <button
+                  onClick={onThumbsDown}
+                  className="text-xs text-text-muted hover:text-accent-red transition-colors px-2 py-0.5 rounded hover:bg-accent-red/10"
+                >
+                  Not Helpful
                 </button>
               )}
             </>

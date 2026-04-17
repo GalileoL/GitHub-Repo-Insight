@@ -177,6 +177,22 @@ export async function askRepo(repo: string, question: string): Promise<AskRespon
   return res.json();
 }
 
+export async function submitEvalFeedback(
+  requestId: string,
+  feedback: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch('/api/rag/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, ...feedback }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error ?? 'Failed to submit feedback');
+  }
+}
+
 export interface SSEStreamOptions {
   signal?: AbortSignal;
   onDelta?: (content: string, seq?: number) => void;
