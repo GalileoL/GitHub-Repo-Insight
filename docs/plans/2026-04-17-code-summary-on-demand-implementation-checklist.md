@@ -34,7 +34,7 @@
 | ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
 | Eval 事件写入 | Completed | 100% | retrieval/code_fetch/answer 已写；`failedFiles` 现在带 classified `reason`（Gemini 建议 3 落地） |
 | Feedback endpoint | Not started | 0% | Task 6.3 — thumbs up/down 独立 endpoint 待做 |
-| 测试设计 | Partial | 45% | 提取器单测完成，router 路由单测已补；code-fetch/retrieval 集成测试待补 |
+| 测试设计 | Partial | 50% | 提取器单测完成，router 与 keyword isolation 单测已补；code-fetch/retrieval 集成测试待补 |
 
 ### 1.2 Fixed Decisions
 
@@ -385,13 +385,13 @@
 
 ### Task 4.3: Keyword search behavior tests
 
-- **Progress**: 30% (手动验证通过；自动化测试缺失)
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 测 non-code query 不混入 `code_summary`
-- [ ] 测 code query 能搜到 `code_summary`
-- [ ] 测 K1/K2 改动不破坏现有搜索结果形态
+- [x] 测 non-code query 不混入 `code_summary`
+- [x] 测 code query 能搜到 `code_summary`
+- [x] 测 K1/K2 改动不破坏现有搜索结果形态
 
 ### Acceptance
 
