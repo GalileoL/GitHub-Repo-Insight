@@ -68,6 +68,13 @@ export interface StatusResponse {
   lastSync?: string;
 }
 
+/** A source file fetched from a repository for code summary indexing */
+export interface RawSourceFile {
+  path: string;
+  content: string;
+  size: number;
+}
+
 /** Raw GitHub data fetched for ingestion */
 export interface RawRepoData {
   readme: string | null;
@@ -75,6 +82,8 @@ export interface RawRepoData {
   pulls: RawPull[];
   releases: RawRelease[];
   commits: RawCommit[];
+  sourceFiles?: RawSourceFile[];
+  headSha?: string;
 }
 
 export interface RawIssue {

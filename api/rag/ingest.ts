@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchRepoData } from '../../lib/rag/github/fetchers.js';
+import { fetchRepoData, fetchRepoSourceFiles } from '../../lib/rag/github/fetchers.js';
 import { chunkRepoData } from '../../lib/rag/chunking/index.js';
 import { embedTexts } from '../../lib/rag/embeddings/index.js';
 import { prewarmEmbeddings } from '../../lib/rag/llm/index.js';
@@ -46,8 +46,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // 1. Fetch raw data from GitHub
-    const rawData = await fetchRepoData(repo, githubToken);
+    // 1. Fetch raw data from GitHub (community data + source files in parallel)
+    const [rawData, sourceResult] = await Promise.all([
+      fetchRepoData(repo, githubToken),
+      fetchRepoSourceFiles(repo, githubToken).catch(() => null),
+    ]);
+
+    // Merge source files into raw data for unified chunking
+    if (sourceResult) {
+      rawData.sourceFiles = sourceResult.files;
+      rawData.headSha = sourceResult.headSha;
+    }
 
     // 2. Chunk the data
     const chunks = chunkRepoData(repo, rawData);

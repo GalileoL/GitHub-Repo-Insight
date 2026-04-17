@@ -1,5 +1,6 @@
-import type { RawRepoData, RawIssue, RawPull, RawRelease, RawCommit } from '../types.js';
+import type { RawRepoData, RawIssue, RawPull, RawRelease, RawCommit, RawSourceFile } from '../types.js';
 import { ghFetch, GITHUB_API } from './client.js';
+import { shouldIndexFile } from '../chunking/code-summary.js';
 
 const GITHUB_GRAPHQL_API = `${GITHUB_API}/graphql`;
 
@@ -540,6 +541,97 @@ async function fetchCommits(repo: string, token?: string): Promise<RawCommit[]> 
     date: c.commit.author?.date ?? '',
     author: c.commit.author?.name ?? null,
   }));
+}
+
+// ═══ Source File Fetching (for code summary indexing) ═══════════
+
+const SOURCE_FILE_CAP = 200;
+
+interface GitHubTreeItem {
+  path: string;
+  type: string;
+  size?: number;
+  sha?: string;
+}
+
+interface GitHubTreeResponse {
+  sha: string;
+  tree: GitHubTreeItem[];
+  truncated: boolean;
+}
+
+/** Fetch the repo file tree and filter to indexable source files */
+async function fetchRepoTree(repo: string, token?: string): Promise<{ paths: Array<{ path: string; size: number }>; headSha: string }> {
+  const tree = await ghFetch<GitHubTreeResponse>(
+    `/repos/${repo}/git/trees/HEAD?recursive=1`,
+    token,
+  );
+
+  const paths = tree.tree
+    .filter((item) => item.type === 'blob' && shouldIndexFile(item.path, item.size))
+    .map((item) => ({ path: item.path, size: item.size ?? 0 }));
+
+  return { paths, headSha: tree.sha };
+}
+
+/** Fetch the raw content of a single file via the GitHub Contents API */
+export async function fetchFileContent(
+  repo: string,
+  filePath: string,
+  token?: string,
+): Promise<string | null> {
+  try {
+    const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+    const res = await fetch(`${GITHUB_API}/repos/${repo}/contents/${encodedPath}`, {
+      headers: {
+        Accept: 'application/vnd.github.raw+json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) return null;
+    return res.text();
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch source files for code summary indexing, with cap and priority */
+export async function fetchRepoSourceFiles(
+  repo: string,
+  token?: string,
+): Promise<{ files: RawSourceFile[]; headSha: string }> {
+  const { paths, headSha } = await fetchRepoTree(repo, token);
+
+  // Priority: entry-point files first, then by size (smaller = more likely focused)
+  const entryPatterns = [/\/index\.\w+$/, /^api\//, /^src\/App\.\w+$/];
+  const sorted = [...paths].sort((a, b) => {
+    const aEntry = entryPatterns.some((p) => p.test(a.path)) ? 0 : 1;
+    const bEntry = entryPatterns.some((p) => p.test(b.path)) ? 0 : 1;
+    if (aEntry !== bEntry) return aEntry - bEntry;
+    return a.size - b.size;
+  });
+
+  const candidates = sorted.slice(0, SOURCE_FILE_CAP);
+
+  // Fetch file contents in batches of 10 to avoid overwhelming the API
+  const files: RawSourceFile[] = [];
+  const BATCH_SIZE = 10;
+
+  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+    const batch = candidates.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (item) => {
+        const content = await fetchFileContent(repo, item.path, token);
+        if (!content) return null;
+        return { path: item.path, content, size: item.size } satisfies RawSourceFile;
+      }),
+    );
+    for (const r of results) {
+      if (r) files.push(r);
+    }
+  }
+
+  return { files, headSha };
 }
 
 /** Fetch all data sources for a repository */
