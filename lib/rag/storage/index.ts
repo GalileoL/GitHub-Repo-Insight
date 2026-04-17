@@ -489,26 +489,15 @@ export async function writeEvalFeedback(
   if (!r) return;
   try {
     const key = getEvalKey(requestId);
-    const existingRaw = await r.hget<string>(key, 'feedback');
-    let existing: Record<string, unknown> = {};
-
-    if (typeof existingRaw === 'string' && existingRaw) {
-      try {
-        const parsed = JSON.parse(existingRaw) as Record<string, unknown>;
-        if (parsed && typeof parsed === 'object') {
-          existing = parsed;
-        }
-      } catch {
-        existing = {};
-      }
-    }
-
+    const feedbackFields = Object.fromEntries(
+      Object.entries(feedback).map(([field, value]) => [
+        `feedback:${field}`,
+        JSON.stringify(value),
+      ]),
+    );
     await r.hset(key, {
-      feedback: JSON.stringify({
-        ...existing,
-        ...feedback,
-        timestamp: Date.now(),
-      }),
+      ...feedbackFields,
+      'feedback:timestamp': String(Date.now()),
     });
     await r.expire(key, EVAL_TTL_SECONDS);
   } catch {

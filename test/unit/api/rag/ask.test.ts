@@ -1,7 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScoredChunk } from '../../../../lib/rag/types.js';
 
-import { codeFetchStage, extractCodeWindow } from '../../../../api/rag/ask.js';
+const {
+  mockIncrementAlertStreak,
+  mockResetAlertStreak,
+  mockCheckAndFireStreakAlert,
+} = vi.hoisted(() => ({
+  mockIncrementAlertStreak: vi.fn().mockResolvedValue(undefined),
+  mockResetAlertStreak: vi.fn().mockResolvedValue(undefined),
+  mockCheckAndFireStreakAlert: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../../../lib/admin/alert-manager.js', () => ({
+  incrementAlertStreak: mockIncrementAlertStreak,
+  resetAlertStreak: mockResetAlertStreak,
+  checkAndFireStreakAlert: mockCheckAndFireStreakAlert,
+}));
+
+import { codeFetchStage, extractCodeWindow, updateCodeFetchAlerts } from '../../../../api/rag/ask.js';
 import * as fetchers from '../../../../lib/rag/github/fetchers.js';
 
 function makeCodeChunk(path: string, symbolNames: string[] = [], score = 1): ScoredChunk {
@@ -119,5 +135,35 @@ describe('codeFetchStage', () => {
       failedFiles: [],
       usedSummaryOnlyFallback: true,
     });
+  });
+});
+
+describe('updateCodeFetchAlerts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('increments each alert streak at most once per request', async () => {
+    await updateCodeFetchAlerts('owner/repo', [
+      { path: 'src/a.ts', reason: 'timeout' },
+      { path: 'src/b.ts', reason: 'timeout' },
+      { path: 'src/c.ts', reason: 'forbidden' },
+      { path: 'src/d.ts', reason: 'unknown' },
+    ]);
+
+    expect(mockIncrementAlertStreak).toHaveBeenCalledTimes(2);
+    expect(mockIncrementAlertStreak).toHaveBeenCalledWith('timeout_streak', 'owner/repo');
+    expect(mockIncrementAlertStreak).toHaveBeenCalledWith('code_fetch_failure_streak', 'owner/repo');
+    expect(mockCheckAndFireStreakAlert).toHaveBeenCalledTimes(2);
+    expect(mockResetAlertStreak).not.toHaveBeenCalled();
+  });
+
+  it('resets both streaks when the request has no failed files', async () => {
+    await updateCodeFetchAlerts('owner/repo', []);
+
+    expect(mockIncrementAlertStreak).not.toHaveBeenCalled();
+    expect(mockResetAlertStreak).toHaveBeenCalledTimes(2);
+    expect(mockResetAlertStreak).toHaveBeenCalledWith('timeout_streak', 'owner/repo');
+    expect(mockResetAlertStreak).toHaveBeenCalledWith('code_fetch_failure_streak', 'owner/repo');
   });
 });

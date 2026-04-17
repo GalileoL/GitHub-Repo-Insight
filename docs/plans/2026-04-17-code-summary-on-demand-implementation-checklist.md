@@ -521,7 +521,7 @@
 
 - [x] `shareCreated` 顺带写 eval
 - [x] `userRetried` / thumbs up/down 用独立 endpoint 或最小侵入方案上报
-- [x] follow-up: `writeEvalFeedback` 改为 merge 语义，share / retry / thumbs 不再互相覆盖
+- [x] follow-up: `writeEvalFeedback` 改为原子多字段写入（`feedback:*`），share / retry / thumbs 不再互相覆盖
 - [x] follow-up: 缓存命中和 `showCached()` 会清空 live `requestId`，避免历史答案误写到上一次 live request
 
 ### Acceptance
@@ -674,7 +674,7 @@
 - [x] 连续模拟相同错误的抑制逻辑已有单测覆盖，suppress window 内不会重复发通知。
 - [x] 日报聚合通过按天索引 + Hash hydrate 生成，不再扫描全量 `rag:eval:*`。
 - [x] 外部通知能力缺失时，告警和日报会降级输出到 structured log。
-- [x] 同一 `requestId` 多次写 `retrieval/code_fetch/answer/feedback` 后，请求量统计仍然只记 1 次，feedback 采用 merge 语义。
+- [x] 同一 `requestId` 多次写 `retrieval/code_fetch/answer/feedback:*` 后，请求量统计仍然只记 1 次，反馈信号采用原子多字段写入。
 
 ### Handoff Note
 

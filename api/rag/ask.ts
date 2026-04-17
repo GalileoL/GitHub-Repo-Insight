@@ -159,6 +159,49 @@ export async function codeFetchStage(
   return { codeContext, fetchedFiles, failedFiles, usedSummaryOnlyFallback: false };
 }
 
+export async function updateCodeFetchAlerts(
+  repo: string,
+  failedFiles: Array<{ path: string; reason: string }>,
+): Promise<void> {
+  const hasTimeoutFailure = failedFiles.some((f) => f.reason === 'timeout');
+  const hasGeneralFailure = failedFiles.some((f) =>
+    f.reason === 'not_found' ||
+    f.reason === 'forbidden' ||
+    f.reason === 'rate_limited' ||
+    f.reason === 'unknown',
+  );
+
+  if (hasTimeoutFailure) {
+    try {
+      await incrementAlertStreak('timeout_streak', repo);
+      await checkAndFireStreakAlert('timeout_streak', repo, 5, { repo });
+    } catch {
+      // best-effort
+    }
+  } else {
+    try {
+      await resetAlertStreak('timeout_streak', repo);
+    } catch {
+      // best-effort
+    }
+  }
+
+  if (hasGeneralFailure) {
+    try {
+      await incrementAlertStreak('code_fetch_failure_streak', repo);
+      await checkAndFireStreakAlert('code_fetch_failure_streak', repo, 5, { repo });
+    } catch {
+      // best-effort
+    }
+  } else {
+    try {
+      await resetAlertStreak('code_fetch_failure_streak', repo);
+    } catch {
+      // best-effort
+    }
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -444,41 +487,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }));
         }
 
-        // Alert wiring: streak alerts on failure reasons
-        for (const f of codeFetchResult.failedFiles) {
-          if (f.reason === 'timeout') {
-            try {
-              await incrementAlertStreak('timeout_streak', repo);
-              await checkAndFireStreakAlert('timeout_streak', repo, 5, { repo });
-            } catch { /* best-effort */ }
-          } else if (
-            f.reason === 'not_found' ||
-            f.reason === 'forbidden' ||
-            f.reason === 'rate_limited' ||
-            f.reason === 'unknown'
-          ) {
-            try {
-              await incrementAlertStreak('code_fetch_failure_streak', repo);
-              await checkAndFireStreakAlert('code_fetch_failure_streak', repo, 5, { repo });
-            } catch { /* best-effort */ }
-          }
-        }
-        // Reset streaks when the current request does not contain that failure class.
-        if (codeFetchResult.failedFiles.every((f) => f.reason !== 'timeout')) {
-          try {
-            await resetAlertStreak('timeout_streak', repo);
-          } catch { /* best-effort */ }
-        }
-        if (codeFetchResult.failedFiles.every(
-          (f) => f.reason !== 'not_found' &&
-            f.reason !== 'forbidden' &&
-            f.reason !== 'rate_limited' &&
-            f.reason !== 'unknown',
-        )) {
-          try {
-            await resetAlertStreak('code_fetch_failure_streak', repo);
-          } catch { /* best-effort */ }
-        }
+        await updateCodeFetchAlerts(repo, codeFetchResult.failedFiles);
       } catch (codeFetchErr) {
         console.log(JSON.stringify({
           type: 'code_fetch_error',
@@ -611,7 +620,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Best-effort eval writes (fire-and-forget)
         void writeEvalEvent(requestId, 'retrieval', {
-          repo, login: auth.login, queryCategory: category,
+          repo, login: auth.login, category, queryCategory: category,
           rewriteMode: rewriteResult.decision.mode,
           firstPassCount: firstPass.length, finalCount: chunks.length,
           topScore: firstPassConfidence.topScore, avgScore: firstPassConfidence.avgScore,
@@ -623,6 +632,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             repo, login: auth.login,
             fetchedFiles: codeFetchResult.fetchedFiles,
             failedFiles: codeFetchResult.failedFiles,
+            summaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
             usedSummaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
           });
         }
@@ -630,6 +640,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           repo, login: auth.login,
           answerLength: answerSoFar.length,
           sourceCount: sources.length,
+          usedRetrievedCode: codeContextPrefix.length > 0,
           hasCodeContext: codeContextPrefix.length > 0,
           streamCancelled: aborted,
         });
@@ -643,7 +654,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Best-effort eval writes
       const evalRequestId = `non-stream-${Date.now()}`;
       void writeEvalEvent(evalRequestId, 'retrieval', {
-        repo, login: auth.login, queryCategory: category,
+        repo, login: auth.login, category, queryCategory: category,
         rewriteMode: rewriteResult.decision.mode,
         firstPassCount: firstPass.length, finalCount: chunks.length,
         topScore: firstPassConfidence.topScore, avgScore: firstPassConfidence.avgScore,
@@ -653,6 +664,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           repo, login: auth.login,
           fetchedFiles: codeFetchResult.fetchedFiles,
           failedFiles: codeFetchResult.failedFiles,
+          summaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
           usedSummaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
         });
       }
@@ -660,6 +672,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         repo, login: auth.login,
         answerLength: result.answer.length,
         sourceCount: result.sources.length,
+        usedRetrievedCode: codeContextPrefix.length > 0,
         hasCodeContext: codeContextPrefix.length > 0,
         streamCancelled: false,
       });

@@ -29,39 +29,29 @@ describe('writeEvalFeedback', () => {
     vi.clearAllMocks();
   });
 
-  it('merges new feedback into the existing feedback payload', async () => {
-    mockRedis.hget.mockResolvedValueOnce(JSON.stringify({
-      thumbsUp: true,
-      userRetried: true,
-      timestamp: 100,
-    }));
-
+  it('writes feedback as independent hash fields so signals do not overwrite each other', async () => {
     await writeEvalFeedback('req_123', { shareCreated: true, shareId: 'share_1' });
 
-    expect(mockRedis.hget).toHaveBeenCalledWith('rag:eval:req_123', 'feedback');
+    expect(mockRedis.hget).not.toHaveBeenCalled();
     expect(mockRedis.hset).toHaveBeenCalledTimes(1);
 
-    const payload = mockRedis.hset.mock.calls[0][1] as { feedback: string };
-    const parsed = JSON.parse(payload.feedback) as Record<string, unknown>;
-    expect(parsed).toMatchObject({
-      thumbsUp: true,
-      userRetried: true,
-      shareCreated: true,
-      shareId: 'share_1',
+    const payload = mockRedis.hset.mock.calls[0][1] as Record<string, string>;
+    expect(payload).toMatchObject({
+      'feedback:shareCreated': 'true',
+      'feedback:shareId': '"share_1"',
     });
-    expect(typeof parsed.timestamp).toBe('number');
-    expect(parsed.timestamp).not.toBe(100);
+    expect(Number(payload['feedback:timestamp'])).toBeGreaterThan(0);
     expect(mockRedis.expire).toHaveBeenCalledWith('rag:eval:req_123', 60 * 60 * 48);
   });
 
-  it('falls back to the new payload when existing feedback is malformed', async () => {
-    mockRedis.hget.mockResolvedValueOnce('not-json');
+  it('issues separate atomic hset calls for concurrent feedback updates', async () => {
+    await Promise.all([
+      writeEvalFeedback('req_123', { thumbsUp: true }),
+      writeEvalFeedback('req_123', { shareCreated: true }),
+    ]);
 
-    await writeEvalFeedback('req_123', { thumbsDown: true });
-
-    const payload = mockRedis.hset.mock.calls[0][1] as { feedback: string };
-    const parsed = JSON.parse(payload.feedback) as Record<string, unknown>;
-    expect(parsed).toMatchObject({ thumbsDown: true });
-    expect(typeof parsed.timestamp).toBe('number');
+    expect(mockRedis.hset).toHaveBeenCalledTimes(2);
+    expect(mockRedis.hset.mock.calls[0][1]).toMatchObject({ 'feedback:thumbsUp': 'true' });
+    expect(mockRedis.hset.mock.calls[1][1]).toMatchObject({ 'feedback:shareCreated': 'true' });
   });
 });

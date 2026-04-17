@@ -383,7 +383,7 @@ Each ask request writes a `rag:eval:{requestId}` Redis Hash (48h TTL) with field
 - `retrieval`: category, topK, scores
 - `code_fetch` (code path only): selectedFiles, failedFiles (with classified reason), usedSummaryOnlyFallback
 - `answer`: model, answerUsedRetrievedCode
-- `feedback`: written via `/api/rag/feedback` or share creation; merge semantics preserve thumbs / retry / share signals together
+- `feedback:*`: written via `/api/rag/feedback` or share creation as independent hash fields (`feedback:thumbsUp`, `feedback:userRetried`, etc.) so concurrent writes do not overwrite each other
 
 ### Phase 2 Future Work (Not Yet Implemented)
 - Multi-language high-precision AST (Python, Go, Rust, Java)

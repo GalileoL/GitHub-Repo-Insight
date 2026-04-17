@@ -161,4 +161,24 @@ describe('aggregateDailyMetrics', () => {
     expect(mockGetEvalIndex).toHaveBeenNthCalledWith(1, DATE);
     expect(mockGetEvalIndex).toHaveBeenNthCalledWith(2, '2026-04-17');
   });
+
+  it('supports legacy writer aliases from ask.ts eval payloads', async () => {
+    mockGetEvalIndex.mockResolvedValueOnce(['req-1']).mockResolvedValueOnce([]);
+    mockRedis.hgetall.mockResolvedValueOnce({
+      retrieval: JSON.stringify({ queryCategory: 'code', timestamp: DAY_START + 1000 }),
+      code_fetch: JSON.stringify({
+        fetchedFiles: [],
+        failedFiles: [],
+        usedSummaryOnlyFallback: true,
+        timestamp: DAY_START + 1000,
+      }),
+      answer: JSON.stringify({ hasCodeContext: true, timestamp: DAY_START + 1000 }),
+    });
+
+    const metrics = await aggregateDailyMetrics(DATE);
+
+    expect(metrics.categoryDistribution).toEqual({ code: 1 });
+    expect(metrics.summaryOnlyFallbackRate).toBe(1);
+    expect(metrics.answerUsedRetrievedCodeRatio).toBe(1);
+  });
 });

@@ -44,6 +44,7 @@ const BATCH_SIZE = 50;
 
 interface RetrievalEvent {
   category?: string;
+  queryCategory?: string;
   timestamp?: number;
 }
 
@@ -51,11 +52,13 @@ interface CodeFetchEvent {
   fetchedFiles?: string[];
   failedFiles?: Array<{ path: string; reason?: string }>;
   summaryOnlyFallback?: boolean;
+  usedSummaryOnlyFallback?: boolean;
   timestamp?: number;
 }
 
 interface AnswerEvent {
   usedRetrievedCode?: boolean;
+  hasCodeContext?: boolean;
   timestamp?: number;
 }
 
@@ -163,8 +166,9 @@ export async function aggregateDailyMetrics(
     const answer = parseJson<AnswerEvent>(h.answer);
 
     // Category distribution
-    if (retrieval?.category) {
-      const cat = retrieval.category;
+    const category = retrieval?.category ?? retrieval?.queryCategory;
+    if (category) {
+      const cat = category;
       categoryDistribution[cat] = (categoryDistribution[cat] ?? 0) + 1;
       if (cat === 'code') {
         codeRequestCount += 1;
@@ -191,7 +195,7 @@ export async function aggregateDailyMetrics(
         failureReasonMap[reason] = (failureReasonMap[reason] ?? 0) + 1;
       }
 
-      if (codeFetch.summaryOnlyFallback) {
+      if (codeFetch.summaryOnlyFallback ?? codeFetch.usedSummaryOnlyFallback) {
         summaryOnlyFallbackCount += 1;
       }
     }
@@ -199,7 +203,7 @@ export async function aggregateDailyMetrics(
     // Answer metrics
     if (answer) {
       answerTotal += 1;
-      if (answer.usedRetrievedCode) {
+      if (answer.usedRetrievedCode ?? answer.hasCodeContext) {
         answerUsedCodeCount += 1;
       }
     }
