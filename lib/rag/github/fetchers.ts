@@ -546,7 +546,27 @@ async function fetchCommits(repo: string, token?: string): Promise<RawCommit[]> 
 // ═══ Source File Fetching (for code summary indexing) ═══════════
 
 const SOURCE_FILE_CAP = 200;
-const ENTRY_PATH_PATTERNS = [/^api\/.+\.[jt]sx?$/, /^lib\/.+\/index\.[jt]sx?$/, /^src\/App\.[jt]sx?$/];
+const GUARANTEED_ENTRY_RULES = [
+  { pattern: /^api\/.+\.[jt]sx?$/, priority: 4 },
+  { pattern: /^(?:src|lib)\/index\.[jt]sx?$/, priority: 3 },
+  { pattern: /^lib\/.+\/index\.[jt]sx?$/, priority: 2 },
+  { pattern: /^src\/App\.[jt]sx?$/, priority: 2 },
+] as const;
+const GENERIC_BASENAME_TOKENS = new Set([
+  'index',
+  'utils',
+  'types',
+  'type',
+  'page',
+  'auth',
+  'store',
+  'hooks',
+  'route',
+  'routes',
+  'handler',
+  'helpers',
+  'common',
+]);
 
 interface GitHubTreeItem {
   path: string;
@@ -565,7 +585,11 @@ type SourceTreePath = { path: string; size: number };
 type SourceRankingData = Pick<RawRepoData, 'pulls' | 'commits'>;
 
 function isGuaranteedEntryPath(filePath: string): boolean {
-  return ENTRY_PATH_PATTERNS.some((pattern) => pattern.test(filePath));
+  return GUARANTEED_ENTRY_RULES.some(({ pattern }) => pattern.test(filePath));
+}
+
+function getGuaranteedEntryPriority(filePath: string): number {
+  return GUARANTEED_ENTRY_RULES.find(({ pattern }) => pattern.test(filePath))?.priority ?? 0;
 }
 
 function basenameWithoutExt(filePath: string): string {
@@ -583,11 +607,12 @@ function countCommitPathMentions(filePath: string, commits: RawCommit[]): number
   if (!basename) return 0;
 
   const basenamePattern = new RegExp(`(^|[^a-z0-9])${escapeRegex(basename)}([^a-z0-9]|$)`, 'i');
+  const allowBasenameHeuristic = basename.length >= 6 && !GENERIC_BASENAME_TOKENS.has(basename);
 
   return commits.reduce((count, commit) => {
     const message = commit.message.toLowerCase();
     if (message.includes(normalizedPath)) return count + 1;
-    if (basename.length >= 4 && basenamePattern.test(message)) return count + 1;
+    if (allowBasenameHeuristic && basenamePattern.test(message)) return count + 1;
     return count;
   }, 0);
 }
@@ -625,41 +650,55 @@ export function prioritizeSourceFilePaths(
   rankingData?: SourceRankingData,
   cap: number = SOURCE_FILE_CAP,
 ): SourceTreePath[] {
-  if (paths.length <= cap) {
-    return [...paths].sort((a, b) => a.size - b.size || a.path.localeCompare(b.path));
-  }
-
-  const guaranteed = paths.filter((item) => isGuaranteedEntryPath(item.path));
-  const guaranteedMap = new Set(guaranteed.map((item) => item.path));
-  const remaining = paths.filter((item) => !guaranteedMap.has(item.path));
-  const guaranteedSelected = guaranteed
-    .sort((a, b) => a.path.localeCompare(b.path))
-    .slice(0, Math.min(cap, guaranteed.length));
-
   const prHitCounts = new Map<string, number>();
   const changeFrequencies = new Map<string, number>();
 
-  for (const item of remaining) {
+  for (const item of paths) {
     prHitCounts.set(item.path, rankingData ? countPrHitsByPath(item.path, rankingData.pulls) : 0);
     changeFrequencies.set(item.path, rankingData ? countCommitPathMentions(item.path, rankingData.commits) : 0);
   }
 
   const maxPrHits = Math.max(...prHitCounts.values(), 0);
   const maxChangeFrequency = Math.max(...changeFrequencies.values(), 0);
-  const maxInverseSize = Math.max(...remaining.map((item) => scoreSize(item.size)), 0);
+  const maxInverseSize = Math.max(...paths.map((item) => scoreSize(item.size)), 0);
+
+  const rankCompetitiveScore = (item: SourceTreePath): number => (
+    normalizeWeight(changeFrequencies.get(item.path) ?? 0, maxChangeFrequency) * 0.4 +
+    normalizeWeight(prHitCounts.get(item.path) ?? 0, maxPrHits) * 0.3 +
+    normalizeWeight(scoreSize(item.size), maxInverseSize) * 0.3
+  );
+
+  const rankGuaranteedScore = (item: SourceTreePath): number => (
+    getGuaranteedEntryPriority(item.path) * 10 + rankCompetitiveScore(item)
+  );
+
+  if (paths.length <= cap) {
+    return [...paths].sort((a, b) => {
+      const guaranteedDelta = getGuaranteedEntryPriority(b.path) - getGuaranteedEntryPriority(a.path);
+      if (guaranteedDelta !== 0) return guaranteedDelta;
+      const scoreDelta = rankCompetitiveScore(b) - rankCompetitiveScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      if (a.size !== b.size) return a.size - b.size;
+      return a.path.localeCompare(b.path);
+    });
+  }
+
+  const guaranteed = paths.filter((item) => isGuaranteedEntryPath(item.path));
+  const guaranteedMap = new Set(guaranteed.map((item) => item.path));
+  const remaining = paths.filter((item) => !guaranteedMap.has(item.path));
+  const guaranteedSelected = guaranteed
+    .sort((a, b) => {
+      const scoreDelta = rankGuaranteedScore(b) - rankGuaranteedScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      if (a.size !== b.size) return a.size - b.size;
+      return a.path.localeCompare(b.path);
+    })
+    .slice(0, Math.min(cap, guaranteed.length));
 
   const competitive = [...remaining]
     .sort((a, b) => {
-      const aScore =
-        normalizeWeight(changeFrequencies.get(a.path) ?? 0, maxChangeFrequency) * 0.4 +
-        normalizeWeight(prHitCounts.get(a.path) ?? 0, maxPrHits) * 0.3 +
-        normalizeWeight(scoreSize(a.size), maxInverseSize) * 0.3;
-      const bScore =
-        normalizeWeight(changeFrequencies.get(b.path) ?? 0, maxChangeFrequency) * 0.4 +
-        normalizeWeight(prHitCounts.get(b.path) ?? 0, maxPrHits) * 0.3 +
-        normalizeWeight(scoreSize(b.size), maxInverseSize) * 0.3;
-
-      if (bScore !== aScore) return bScore - aScore;
+      const scoreDelta = rankCompetitiveScore(b) - rankCompetitiveScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
       if (a.size !== b.size) return a.size - b.size;
       return a.path.localeCompare(b.path);
     })

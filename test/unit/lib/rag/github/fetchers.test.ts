@@ -210,6 +210,7 @@ describe('prioritizeSourceFilePaths', () => {
     const ranked = prioritizeSourceFilePaths([
       { path: 'src/feature/z.ts', size: 200 },
       { path: 'api/rag/ask.ts', size: 150 },
+      { path: 'src/index.ts', size: 180 },
       { path: 'src/App.tsx', size: 400 },
       { path: 'lib/rag/index.ts', size: 120 },
     ], rankingData, 2);
@@ -218,6 +219,7 @@ describe('prioritizeSourceFilePaths', () => {
     expect(ranked.map((item) => item.path)).toContain('api/rag/ask.ts');
     expect(ranked.every((item) => (
       item.path === 'api/rag/ask.ts'
+      || item.path === 'src/index.ts'
       || item.path === 'src/App.tsx'
       || item.path === 'lib/rag/index.ts'
     ))).toBe(true);
@@ -231,6 +233,47 @@ describe('prioritizeSourceFilePaths', () => {
     ], rankingData, 2);
 
     expect(ranked[0]?.path).toBe('src/auth/retry.ts');
+  });
+
+  it('does not over-rank generic basenames from broad commit wording', () => {
+    const ranked = prioritizeSourceFilePaths([
+      { path: 'src/auth.ts', size: 600 },
+      { path: 'src/retry-flow.ts', size: 400 },
+    ], {
+      commits: [
+        {
+          sha: 'c3',
+          message: 'auth cleanup and auth token fixes',
+          html_url: 'https://github.com/owner/repo/commit/c3',
+          date: '2024-03-22T00:00:00Z',
+          author: 'alice',
+        },
+      ],
+      pulls: [],
+    }, 2);
+
+    expect(ranked.map((item) => item.path)).toEqual(['src/retry-flow.ts', 'src/auth.ts']);
+  });
+
+  it('rebalances guaranteed overflow by entry priority instead of alphabetical order', () => {
+    const ranked = prioritizeSourceFilePaths([
+      { path: 'api/z-last.ts', size: 140 },
+      { path: 'api/a-first.ts', size: 160 },
+      { path: 'src/index.ts', size: 120 },
+    ], {
+      commits: [
+        {
+          sha: 'c4',
+          message: 'touch api/z-last.ts',
+          html_url: 'https://github.com/owner/repo/commit/c4',
+          date: '2024-03-22T00:00:00Z',
+          author: 'alice',
+        },
+      ],
+      pulls: [],
+    }, 2);
+
+    expect(ranked.map((item) => item.path)).toEqual(['api/z-last.ts', 'api/a-first.ts']);
   });
 });
 
