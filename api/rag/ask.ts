@@ -26,6 +26,11 @@ import { rerank } from '../../lib/rag/retrieval/rerank.js';
 import type { RetrievalDiagnostics, ScoredChunk } from '../../lib/rag/types.js';
 import { classifyIntent, executeAnalyticsQuery } from '../../lib/rag/intents/index.js';
 import { fetchFileContentDetailed } from '../../lib/rag/github/fetchers.js';
+import {
+  incrementAlertStreak,
+  resetAlertStreak,
+  checkAndFireStreakAlert,
+} from '../../lib/admin/alert-manager.js';
 
 // ═══ Code Fetch Stage ════════════════════════════════════════════
 
@@ -437,6 +442,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             failedFiles: codeFetchResult.failedFiles,
             usedSummaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
           }));
+        }
+
+        // Alert wiring: streak alerts on failure reasons
+        for (const f of codeFetchResult.failedFiles) {
+          if (f.reason === 'timeout') {
+            try {
+              await incrementAlertStreak('timeout_streak', repo);
+              await checkAndFireStreakAlert('timeout_streak', repo, 5, { repo });
+            } catch { /* best-effort */ }
+          } else if (
+            f.reason === 'not_found' ||
+            f.reason === 'forbidden' ||
+            f.reason === 'rate_limited' ||
+            f.reason === 'unknown'
+          ) {
+            try {
+              await incrementAlertStreak('code_fetch_failure_streak', repo);
+              await checkAndFireStreakAlert('code_fetch_failure_streak', repo, 5, { repo });
+            } catch { /* best-effort */ }
+          }
+        }
+        // Reset streaks when the current request does not contain that failure class.
+        if (codeFetchResult.failedFiles.every((f) => f.reason !== 'timeout')) {
+          try {
+            await resetAlertStreak('timeout_streak', repo);
+          } catch { /* best-effort */ }
+        }
+        if (codeFetchResult.failedFiles.every(
+          (f) => f.reason !== 'not_found' &&
+            f.reason !== 'forbidden' &&
+            f.reason !== 'rate_limited' &&
+            f.reason !== 'unknown',
+        )) {
+          try {
+            await resetAlertStreak('code_fetch_failure_streak', repo);
+          } catch { /* best-effort */ }
         }
       } catch (codeFetchErr) {
         console.log(JSON.stringify({

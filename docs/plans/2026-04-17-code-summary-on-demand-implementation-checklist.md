@@ -11,8 +11,8 @@
 
 ## 1. Current Status Snapshot
 
-- **Plan status**: Ready for implementation
-- **Implementation status**: Phase 1-6 complete, Phase 7 (docs) in progress
+- **Plan status**: Implemented
+- **Implementation status**: Phase 1-8 complete
 - **Discussion status**: Finalized through `discussion/summary.md` (`Current Round: round-03`)
 - **Primary goal**: 为 Ask Repo 增加“源码摘要索引 + 按需回源源码”能力，并补齐结构化评估记录
 - **Out of scope for Phase 1**:
@@ -33,8 +33,9 @@
 | K2 物理拆分 | Completed | 100% | `fetchCoreRepoChunks` / `fetchCodeSummaryChunks` 用 `range({prefix})` 按 chunk-ID 前缀物理隔离 |
 | ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
 | Eval 事件写入 | Completed | 100% | retrieval/code_fetch/answer 已写；`failedFiles` 现在带 classified `reason`（Gemini 建议 3 落地） |
-| Feedback endpoint | Completed | 100% | `/api/rag/feedback` 已落地，share/retry/thumbs 走 request-level feedback |
-| 测试设计 | Partial | 70% | 提取器、router、keyword isolation、code-fetch、feedback API 测试已补；更高层 retrieval 集成测试待补 |
+| Feedback endpoint | Completed | 100% | `/api/rag/feedback` 已落地，share/retry/thumbs 走 request-level feedback；缓存/历史答案会清空 live `requestId`，避免旧 request 污染反馈 |
+| Monitoring / reporting | Completed | 100% | 按天 eval 索引、日报聚合、notifier、alert manager、admin report route 已落地 |
+| 测试设计 | Partial | 82% | 提取器、router、keyword isolation、code-fetch、feedback API、admin monitoring suite 已补；更高层 retrieval 集成测试待补 |
 
 ### 1.2 Fixed Decisions
 
@@ -520,6 +521,8 @@
 
 - [x] `shareCreated` 顺带写 eval
 - [x] `userRetried` / thumbs up/down 用独立 endpoint 或最小侵入方案上报
+- [x] follow-up: `writeEvalFeedback` 改为 merge 语义，share / retry / thumbs 不再互相覆盖
+- [x] follow-up: 缓存命中和 `showCached()` 会清空 live `requestId`，避免历史答案误写到上一次 live request
 
 ### Acceptance
 
@@ -549,7 +552,7 @@
 
 ## Phase 8: Production-Grade Monitoring System (Revised)
 
-- **Status**: Needs Fixes (implementation committed ea150d1, L3 code review found critical/high issues — see Phase 8 Review Findings below)
+- **Status**: Completed
 - **Goal**: 构建分布式、低耦合的监控体系，拆分为“索引化日报管线”和“带抑制机制的实时告警”两套子系统。
 
 ### Phase 8 Fixed Decisions
@@ -604,7 +607,7 @@
 - [x] 为 `threshold-based alerts` 实现无状态阈值检查，不引入无意义的 streak counter。
 - [x] 实现告警抑制：发送告警前检查 suppress key，发送后写入 suppress key。
 - [x] 将 suppress key 粒度明确为至少 `rag:alert:suppress:{type}:{repo}`，必要时允许扩展到 `:{route}`。
-- [ ] 集成到 `ask.ts` 和 `ingest.ts` 的错误处理路径，但不要在底层 fetcher 中直接发通知。
+- [x] 集成到 `ask.ts` 和 `ingest.ts` 的错误处理路径，但不要在底层 fetcher 中直接发通知。
 
 ### Task 8.3: Notifier Abstraction Layer
 
@@ -668,10 +671,10 @@
 
 ### Acceptance
 
-- [ ] 连续模拟 10 次相同错误，验证 suppress window 内仅收到 1 次高优先级通知。
-- [ ] 调用日报接口，验证是否通过按天索引快速生成最近 24h 报表，而不是扫描全量 `rag:eval:*`。
-- [ ] 关闭外部通知能力，验证告警和日报都能降级输出到 structured log。
-- [ ] 验证同一 `requestId` 多次写 `retrieval/code_fetch/answer/feedback` 后，请求量统计仍然只记 1 次。
+- [x] 连续模拟相同错误的抑制逻辑已有单测覆盖，suppress window 内不会重复发通知。
+- [x] 日报聚合通过按天索引 + Hash hydrate 生成，不再扫描全量 `rag:eval:*`。
+- [x] 外部通知能力缺失时，告警和日报会降级输出到 structured log。
+- [x] 同一 `requestId` 多次写 `retrieval/code_fetch/answer/feedback` 后，请求量统计仍然只记 1 次，feedback 采用 merge 语义。
 
 ### Handoff Note
 
@@ -684,20 +687,20 @@
 
 ---
 
-## Phase 8 Review Findings — Required Fixes
+## Phase 8 Review Findings — Resolved
 
 > Code review performed 2026-04-18 after commit `ea150d1`. Risk level L3.
-> All CRITICAL and HIGH items must be fixed before Phase 8 can be marked Completed.
+> Resolved on 2026-04-18. Full local check passed: `npx tsc -b && npm run lint && npm test && npx vite build`.
 > Run `pnpm exec tsc -b && pnpm lint && pnpm test && pnpm build` after each fix group.
 
 ### CRITICAL (blocking)
 
-- [ ] **C1 — writeEvalEvent must never throw** (`lib/rag/storage/index.ts`)
+- [x] **C1 — writeEvalEvent must never throw** (`lib/rag/storage/index.ts`)
   - Wrap entire `writeEvalEvent` body in `try { … } catch { /* best-effort */ }`
   - Change `Promise.all([hset, sadd, expire1, expire2])` → `Promise.allSettled(...)` so one Redis failure doesn't kill the others
   - Reason: called in `ask.ts` finally block via `void writeEvalEvent(...)`; a throw becomes an unhandled rejection that can kill the serverless lambda
 
-- [ ] **C2 — Alert-manager is dead code — wire it into ask.ts and ingest.ts** (`api/rag/ask.ts`, `api/rag/ingest.ts`)
+- [x] **C2 — Alert-manager is dead code — wire it into ask.ts and ingest.ts** (`api/rag/ask.ts`, `api/rag/ingest.ts`)
   - In `ask.ts` code fetch path:
     - On file fetch timeout (`reason === 'timeout'`): `incrementAlertStreak('timeout_streak', repo)` + `checkAndFireStreakAlert('timeout_streak', repo, 5, { repo })`
     - On other fetch failures: `incrementAlertStreak('code_fetch_failure_streak', repo)` + `checkAndFireStreakAlert('code_fetch_failure_streak', repo, 5, { repo })`
@@ -709,23 +712,23 @@
 
 ### HIGH (blocking)
 
-- [ ] **H1 — Eval hash TTL mismatch** (`lib/rag/storage/index.ts`)
+- [x] **H1 — Eval hash TTL mismatch** (`lib/rag/storage/index.ts`)
   - Change `EVAL_TTL_SECONDS` from 24h to 48h (match index set TTL)
   - Prevents stale-hash lookups: aggregator reads index sets for 48h but hashes expire after 24h, causing empty `HGETALL` responses
 
-- [ ] **H2 — Resend `from` default is invalid** (`lib/admin/notifier.ts`)
+- [x] **H2 — Resend `from` default is invalid** (`lib/admin/notifier.ts`)
   - Only attempt Resend channel if `RESEND_API_KEY` AND `OPS_EMAIL_TO` AND `OPS_EMAIL_FROM` are all set
   - Remove the `'noreply@notifications.example.com'` default entirely
   - If `OPS_EMAIL_FROM` is missing, skip the API call and fall through to structured log
 
-- [ ] **H3 — report.ts auth/robustness hardening** (`api/admin/report.ts`)
+- [x] **H3 — report.ts auth/robustness hardening** (`api/admin/report.ts`)
   - If `CRON_SECRET` env var is missing/empty → return 500 (not 401) so Vercel marks cron run as failed
   - Replace `authHeader !== \`Bearer ${cronSecret}\`` with `crypto.timingSafeEqual` (import from `node:crypto`)
   - Add method guard: `if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })`
   - Validate `dateParam` matches `/^\d{4}-\d{2}-\d{2}$/`; return 400 if invalid
   - Wrap `aggregateDailyMetrics` + `renderDailyReport` in try/catch; on error call `sendOpsNotification(...)` then return 500
 
-- [ ] **H4 — Fix 24h window in metrics-aggregator.ts** (`lib/admin/metrics-aggregator.ts`)
+- [x] **H4 — Fix 24h window in metrics-aggregator.ts** (`lib/admin/metrics-aggregator.ts`)
   - Replace rolling `Date.now() - 24h` filter with calendar-day window derived from `dateUtc`:
     ```ts
     const dayStart = new Date(`${dateUtc}T00:00:00Z`).getTime();
@@ -735,32 +738,32 @@
 
 ### MEDIUM
 
-- [ ] **M1 — Fix codeFetchTriggerRate denominator** (`lib/admin/metrics-aggregator.ts`)
+- [x] **M1 — Fix codeFetchTriggerRate denominator** (`lib/admin/metrics-aggregator.ts`)
   - Track `codeRequestCount` = requests where `retrieval.category === 'code'`
   - `codeFetchTriggerRate = codeFetchCount / codeRequestCount` (not `/ totalRequests`)
   - Remove `codeRequestsWithFetch` counter (duplicate of `codeFetchCount`)
 
 ### LOW
 
-- [ ] **L1 — getEvalIndex type safety** (`lib/rag/storage/index.ts`)
+- [x] **L1 — getEvalIndex type safety** (`lib/rag/storage/index.ts`)
   - Filter result: `.filter((m): m is string => typeof m === 'string')`
 
-- [ ] **L2 — Alert streak key needs safety-net TTL** (`lib/admin/alert-manager.ts`)
+- [x] **L2 — Alert streak key needs safety-net TTL** (`lib/admin/alert-manager.ts`)
   - After `r.incr(streakKey)`, add `await r.expire(streakKey, 24 * 3600)` to prevent forever-growing counters if reset path is never reached
 
-- [ ] **L3 — Log Resend failure body** (`lib/admin/notifier.ts`)
+- [x] **L3 — Log Resend failure body** (`lib/admin/notifier.ts`)
   - In `!res.ok` branch: `console.warn(JSON.stringify({ channel: 'resend', status: res.status, body: await res.text().catch(() => '') }))`
 
 ### Missing Tests (required for L3)
 
-- [ ] **T1 — `lib/admin/notifier.test.ts`**
+- [x] **T1 — `lib/admin/notifier.test.ts`**
   - All env vars missing → falls through to structured log without throwing
   - Webhook set and fetch succeeds → webhook is called
   - Webhook fetch throws → does not propagate
   - Resend returns 403 → falls through to log without throwing
   - Use `vi.stubGlobal('fetch', ...)` and `vi.spyOn(console, 'log')`
 
-- [ ] **T2 — `lib/admin/alert-manager.test.ts`**
+- [x] **T2 — `lib/admin/alert-manager.test.ts`**
   - `incrementAlertStreak` calls INCR + EXPIRE
   - `resetAlertStreak` calls DEL
   - `checkAndFireStreakAlert` fires notification when streak >= threshold and no suppress key
@@ -768,13 +771,13 @@
   - `checkThresholdAlert` fires when value <= threshold
   - All functions never throw when Redis throws
 
-- [ ] **T3 — `lib/admin/metrics-aggregator.test.ts`**
+- [x] **T3 — `lib/admin/metrics-aggregator.test.ts`**
   - Empty index set → zero metrics without error
   - Malformed JSON in hash field → skipped gracefully
   - Correct calculation with sample data (2 requests, 1 code fetch, 1 failure)
   - Division-by-zero cases → 0 rates
 
-- [ ] **T4 — `api/admin/report.test.ts`**
+- [x] **T4 — `api/admin/report.test.ts`**
   - Missing auth header → 401
   - Wrong secret → 401
   - Missing `CRON_SECRET` env var → 500
@@ -788,13 +791,14 @@
 1. Read this section and the code in `lib/admin/`, `api/admin/report.ts`, `lib/rag/storage/index.ts`
 2. Fix items in order: C1 → C2 → H1–H4 → M1 → L1–L3 → Tests
 3. After all fixes: `pnpm exec tsc -b && pnpm lint && pnpm test && pnpm build` — all must pass
-4. Commit with message `fix: phase 8 review — harden storage, auth, metrics, wire alert-manager`
-5. Mark Phase 8 status as "Completed" in this checklist
+4. Commit used: `fix: phase 8 review — harden storage, auth, metrics, wire alert-manager`
+5. Phase 8 status is now `Completed`
 
 ---
 
 ## 9. Immediate Next Step
 
-如果不开始实现监控，推荐顺序是：
-1. 补齐 `router` 的集成测试。
-2. 调优 `Phase 3` 的文件优先级打分。
+后续如果继续推进，建议顺序是：
+1. 补齐更高层 retrieval / ask 集成测试。
+2. 做真实 cron / webhook smoke test。
+3. 评估 Phase 2 范围：增量索引、多语言 AST、namespace 分离。

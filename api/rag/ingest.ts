@@ -5,6 +5,11 @@ import { embedTexts } from '../../lib/rag/embeddings/index.js';
 import { prewarmEmbeddings } from '../../lib/rag/llm/index.js';
 import { upsertChunks, deleteRepoChunks, setRepoChunkCount } from '../../lib/rag/storage/index.js';
 import { authenticateRequest, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
+import {
+  incrementAlertStreak,
+  resetAlertStreak,
+  checkAndFireStreakAlert,
+} from '../../lib/admin/alert-manager.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -78,12 +83,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Kick off a best-effort embedding pre-warm to reduce first-query latency
     void prewarmEmbeddings();
 
+    try {
+      await resetAlertStreak('ingest_failure_streak', repo);
+    } catch { /* best-effort */ }
+
     return res.status(200).json({
       status: 'ok',
       chunksIndexed: chunks.length,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    try {
+      await incrementAlertStreak('ingest_failure_streak', repo);
+      await checkAndFireStreakAlert('ingest_failure_streak', repo, 3, { repo });
+    } catch { /* best-effort */ }
     return res.status(500).json({ status: 'error', error: message, chunksIndexed: 0, message });
   }
 }

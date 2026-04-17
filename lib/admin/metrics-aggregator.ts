@@ -15,6 +15,11 @@ export interface DailyMetrics {
 
 let _redis: Redis | null = null;
 
+/** Reset the Redis singleton — for testing only */
+export function _resetRedis(): void {
+  _redis = null;
+}
+
 function getRedis(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -29,7 +34,7 @@ function getEvalHashKey(requestId: string): string {
   return `rag:eval:${requestId}`;
 }
 
-function yesterdayUtc(dateUtc: string): string {
+function previousUtcDate(dateUtc: string): string {
   const d = new Date(`${dateUtc}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
@@ -105,21 +110,23 @@ export async function aggregateDailyMetrics(
 
   if (!r) return empty;
 
-  // Read requestIds from today and yesterday, dedup
-  const [todayIds, yesterdayIds] = await Promise.all([
+  // Read requestIds from the target day and the previous day so requests that
+  // started before midnight but completed on the target day are still visible.
+  const [todayIds, previousDayIds] = await Promise.all([
     getEvalIndex(dateUtc),
-    getEvalIndex(yesterdayUtc(dateUtc)),
+    getEvalIndex(previousUtcDate(dateUtc)),
   ]);
-
-  const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-  const allIds = Array.from(new Set([...todayIds, ...yesterdayIds]));
+  const allIds = Array.from(new Set([...todayIds, ...previousDayIds]));
 
   if (allIds.length === 0) return empty;
 
   // Batch-fetch all hashes
   const hashes = await fetchHashesBatch(r, allIds);
 
-  // Filter to last 24h by checking the earliest timestamp across event fields
+  // Filter to the calendar day window for dateUtc
+  const dayStart = new Date(`${dateUtc}T00:00:00Z`).getTime();
+  const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+
   const recentHashes = hashes.filter((h) => {
     const retrieval = parseJson<RetrievalEvent>(h.retrieval);
     const codeFetch = parseJson<CodeFetchEvent>(h.code_fetch);
@@ -130,17 +137,18 @@ export async function aggregateDailyMetrics(
       answer?.timestamp,
     ].filter((t): t is number => typeof t === 'number');
     if (timestamps.length === 0) return false;
-    return Math.max(...timestamps) >= cutoffMs;
+    const ts = Math.max(...timestamps);
+    return ts >= dayStart && ts < dayEnd;
   });
 
   if (recentHashes.length === 0) return empty;
 
   let totalRequests = 0;
   const categoryDistribution: Record<string, number> = {};
+  let codeRequestCount = 0;
   let codeFetchCount = 0;
   let fetchedFilesTotal = 0;
   let failedFilesTotal = 0;
-  let codeRequestsWithFetch = 0;
   let summaryOnlyFallbackCount = 0;
   const fileCountMap: Record<string, number> = {};
   const failureReasonMap: Record<string, number> = {};
@@ -158,6 +166,9 @@ export async function aggregateDailyMetrics(
     if (retrieval?.category) {
       const cat = retrieval.category;
       categoryDistribution[cat] = (categoryDistribution[cat] ?? 0) + 1;
+      if (cat === 'code') {
+        codeRequestCount += 1;
+      }
     }
 
     // Code fetch metrics
@@ -180,8 +191,6 @@ export async function aggregateDailyMetrics(
         failureReasonMap[reason] = (failureReasonMap[reason] ?? 0) + 1;
       }
 
-      // Summary-only fallback
-      codeRequestsWithFetch += 1;
       if (codeFetch.summaryOnlyFallback) {
         summaryOnlyFallbackCount += 1;
       }
@@ -209,13 +218,11 @@ export async function aggregateDailyMetrics(
     totalRequests,
     categoryDistribution,
     codeFetchTriggerRate:
-      totalRequests > 0 ? codeFetchCount / totalRequests : 0,
+      codeRequestCount > 0 ? codeFetchCount / codeRequestCount : 0,
     fetchSuccessRate:
       attemptedFiles > 0 ? fetchedFilesTotal / attemptedFiles : 0,
     summaryOnlyFallbackRate:
-      codeRequestsWithFetch > 0
-        ? summaryOnlyFallbackCount / codeRequestsWithFetch
-        : 0,
+      codeFetchCount > 0 ? summaryOnlyFallbackCount / codeFetchCount : 0,
     topSelectedFiles,
     failureReasonDistribution: failureReasonMap,
     answerUsedRetrievedCodeRatio:

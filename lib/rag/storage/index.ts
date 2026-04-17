@@ -434,7 +434,7 @@ export async function deleteShareEntry(shareId: string): Promise<void> {
 // Evaluation event helpers
 // -----------------------------------------------------------------------------
 
-const EVAL_TTL_SECONDS = 60 * 60 * 24; // 24h
+const EVAL_TTL_SECONDS = 60 * 60 * 48; // 48h — matches index TTL to prevent stale-hash lookups
 
 const EVAL_INDEX_TTL_HOURS = Number(process.env.EVAL_INDEX_TTL_HOURS ?? 48);
 const EVAL_INDEX_TTL_SECONDS = EVAL_INDEX_TTL_HOURS * 60 * 60;
@@ -452,7 +452,7 @@ export async function getEvalIndex(date: string): Promise<string[]> {
   const r = getRedis();
   if (!r) return [];
   const members = await r.smembers(getEvalIndexKey(date));
-  return members as string[];
+  return (members ?? []).filter((m): m is string => typeof m === 'string');
 }
 
 /** Write a single evaluation event field to the Redis Hash for a request */
@@ -463,17 +463,21 @@ export async function writeEvalEvent(
 ): Promise<void> {
   const r = getRedis();
   if (!r) return;
-  const key = getEvalKey(requestId);
-  const dateUtc = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const indexKey = getEvalIndexKey(dateUtc);
-  await Promise.all([
-    r.hset(key, { [eventType]: JSON.stringify({ ...data, timestamp: Date.now() }) }),
-    r.sadd(indexKey, requestId),
-  ]);
-  await Promise.all([
-    r.expire(key, EVAL_TTL_SECONDS),
-    r.expire(indexKey, EVAL_INDEX_TTL_SECONDS),
-  ]);
+  try {
+    const key = getEvalKey(requestId);
+    const dateUtc = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const indexKey = getEvalIndexKey(dateUtc);
+    await Promise.allSettled([
+      r.hset(key, { [eventType]: JSON.stringify({ ...data, timestamp: Date.now() }) }),
+      r.sadd(indexKey, requestId),
+    ]);
+    await Promise.allSettled([
+      r.expire(key, EVAL_TTL_SECONDS),
+      r.expire(indexKey, EVAL_INDEX_TTL_SECONDS),
+    ]);
+  } catch {
+    // best-effort: silently ignore
+  }
 }
 
 /** Write user feedback (thumbs up/down, retry) to the eval Hash */
@@ -483,7 +487,31 @@ export async function writeEvalFeedback(
 ): Promise<void> {
   const r = getRedis();
   if (!r) return;
-  const key = getEvalKey(requestId);
-  await r.hset(key, { feedback: JSON.stringify({ ...feedback, timestamp: Date.now() }) });
-  await r.expire(key, EVAL_TTL_SECONDS);
+  try {
+    const key = getEvalKey(requestId);
+    const existingRaw = await r.hget<string>(key, 'feedback');
+    let existing: Record<string, unknown> = {};
+
+    if (typeof existingRaw === 'string' && existingRaw) {
+      try {
+        const parsed = JSON.parse(existingRaw) as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object') {
+          existing = parsed;
+        }
+      } catch {
+        existing = {};
+      }
+    }
+
+    await r.hset(key, {
+      feedback: JSON.stringify({
+        ...existing,
+        ...feedback,
+        timestamp: Date.now(),
+      }),
+    });
+    await r.expire(key, EVAL_TTL_SECONDS);
+  } catch {
+    // best-effort: silently ignore
+  }
 }

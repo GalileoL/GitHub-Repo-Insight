@@ -17,6 +17,11 @@ export interface AlertContext {
 
 let _redis: Redis | null = null;
 
+/** Reset the Redis singleton — for testing only */
+export function _resetRedis(): void {
+  _redis = null;
+}
+
 function getRedis(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -48,6 +53,7 @@ export async function incrementAlertStreak(
   if (!r) return 0;
   try {
     const count = await r.incr(streakKey(type, repo));
+    await r.expire(streakKey(type, repo), 24 * 3600);
     return count;
   } catch {
     return 0;

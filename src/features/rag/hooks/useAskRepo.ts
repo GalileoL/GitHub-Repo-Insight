@@ -108,6 +108,10 @@ export function useAskRepo(repo: string) {
         streamCompletedRef.current = true;
         answerRef.current = cached.answer;
         sourcesRef.current = cached.sources;
+        requestIdRef.current = null;
+        lastSeqRef.current = 0;
+        isResumingRef.current = false;
+        retryCountRef.current = 0;
         return;
       }
 
@@ -310,10 +314,18 @@ export function useAskRepo(repo: string) {
   const showCached = useCallback(
     (entry: { answer: string; sources: Source[] }) => {
       mutation.reset();
+      setPreviousAnswer(null);
       setStreamingAnswer(entry.answer);
       setSources(entry.sources);
       setStreamStatus('done');
       setStreamError(null);
+      streamCompletedRef.current = true;
+      answerRef.current = entry.answer;
+      sourcesRef.current = entry.sources;
+      requestIdRef.current = null;
+      lastSeqRef.current = 0;
+      isResumingRef.current = false;
+      retryCountRef.current = 0;
     },
     [mutation],
   );

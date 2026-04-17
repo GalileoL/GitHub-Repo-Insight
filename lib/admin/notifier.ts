@@ -28,7 +28,8 @@ async function tryWebhook(payload: NotificationPayload): Promise<boolean> {
 async function tryResend(payload: NotificationPayload): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.OPS_EMAIL_TO;
-  if (!apiKey || !to) return false;
+  const from = process.env.OPS_EMAIL_FROM;
+  if (!apiKey || !to || !from) return false;
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -37,12 +38,15 @@ async function tryResend(payload: NotificationPayload): Promise<boolean> {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        from: process.env.OPS_EMAIL_FROM ?? 'noreply@notifications.example.com',
+        from,
         to,
         subject: payload.subject,
         text: payload.body,
       }),
     });
+    if (!res.ok) {
+      console.warn(JSON.stringify({ channel: 'resend', status: res.status, body: await res.text().catch(() => '') }));
+    }
     return res.ok;
   } catch {
     return false;

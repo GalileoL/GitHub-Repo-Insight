@@ -59,7 +59,13 @@ Keep it up to date when architecture, APIs, or conventions change.
 - LLM:
   - `lib/rag/llm/index.ts`: provider config, prompt (real source code takes priority over summaries), stream/non-stream answer generation, `rewriteQueries()` for strong-llm mode
 - Storage:
-  - `lib/rag/storage/index.ts`: Upstash Vector ops; **K2 physical split** via `fetchCoreRepoChunks` (readme/issue/pr/release/commit prefix scans) and `fetchCodeSummaryChunks` (`{repo}:code:` prefix); Redis helpers for chunk counts, stream sessions, share entries, **eval events** (`writeEvalEvent`, `writeEvalFeedback`)
+  - `lib/rag/storage/index.ts`: Upstash Vector ops; **K2 physical split** via `fetchCoreRepoChunks` (readme/issue/pr/release/commit prefix scans) and `fetchCodeSummaryChunks` (`{repo}:code:` prefix); Redis helpers for chunk counts, stream sessions, share entries, **eval events** (`writeEvalEvent`, `writeEvalFeedback`) and per-day eval secondary indexes (`rag:eval:index:{YYYY-MM-DD}`)
+- Ops / monitoring:
+  - `lib/admin/alert-manager.ts`: Redis-backed streak / threshold alerts with suppress keys
+  - `lib/admin/metrics-aggregator.ts`: indexed daily metrics hydration from eval hashes
+  - `lib/admin/report-renderer.ts`: markdown daily report formatter
+  - `lib/admin/notifier.ts`: scenario-aware notification routing (`Webhook -> Resend -> structured log` for live alerts, `Resend -> structured log` for daily report)
+  - `api/admin/report.ts`: CRON-protected daily report endpoint
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: session-cookie auth, GitHub token verify/refresh, daily ask/ingest limits in Redis
 - GitHub API client:
@@ -250,7 +256,10 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - `rag:stream:progress:<requestId>`: SSE progress checkpoint (lastSeq/partialAnswer), 5 min TTL
 - `rag:stream:<requestId>`: legacy combined session key kept for backwards compatibility
 - `rag:share:<shareId>`: shared answer payload, 7 day TTL
-- `rag:eval:<requestId>`: per-request evaluation hash (retrieval/code_fetch/answer/feedback events), 24h TTL
+- `rag:eval:<requestId>`: per-request evaluation hash (retrieval/code_fetch/answer/feedback events), 48h TTL
+- `rag:eval:index:<YYYY-MM-DD>`: per-day requestId set used by daily report aggregation, 48h TTL by default
+- `rag:alert:streak:<type>:<repo>`: Redis streak counters for live alerts
+- `rag:alert:suppress:<type>:<repo>`: alert suppress keys to avoid duplicate notifications
 
 ## 12) Update Checklist (When Editing This Repo)
 Update this file when any of these changes happen:
@@ -328,16 +337,16 @@ Update this file when any of these changes happen:
 
 ### Phase 8 (Priority: Low)
 **Monitoring & hardening**
-- [ ] Add server-side telemetry / storage for stream metrics (e.g., send to Datadog or App Insights)
+- [x] Add Redis-backed eval indexing, daily report aggregation, and notifier-based ops alerts
 - [ ] Harden retry/resume logic against payload tampering
 - [ ] Add intentional rate limiting for shared links
 - [ ] Improve shared link UX with expiration notice
 - Files: `lib/rag/metrics/index.ts`, `api/rag/*`, `src/features/rag/*`
 **Documentation & Monitoring**
 - [ ] Write stream interruption guide for users (when to expect cancel/retry)
-- [ ] Add logging: stream lifecycle events (start, chunk received, complete, error)
+- [x] Add logging: stream lifecycle events (start, chunk received, complete, error)
 - [ ] Dashboard: streaming stats (success rate, avg duration, cancel rate by repo)
-- [ ] Alert on: high error rate, > threshold connection churn
+- [x] Alert on: timeout streak / ingest failure streak / low GitHub rate limit thresholds via notifier
 - Files: `docs/`, (new) `lib/rag/logging/index.ts`, (new) `api/analytics/streams.ts`
 
 ## 16) Code Summary + On-Demand Fetch Pipeline (NEW — 2026-04-17)
@@ -370,18 +379,18 @@ rerank → codeFetchStage → generateAnswer
 - **K2 (physical):** `fetchCoreRepoChunks` scans `{repo}:readme:`, `{repo}:issue:`, etc. separately; `fetchCodeSummaryChunks` scans `{repo}:code:` prefix — code_summary vectors never touch the wire for non-code queries
 
 ### Eval Events
-Each ask request writes a `rag:eval:{requestId}` Redis Hash (24h TTL) with fields:
+Each ask request writes a `rag:eval:{requestId}` Redis Hash (48h TTL) with fields:
 - `retrieval`: category, topK, scores
 - `code_fetch` (code path only): selectedFiles, failedFiles (with classified reason), usedSummaryOnlyFallback
 - `answer`: model, answerUsedRetrievedCode
-- `feedback`: written via `/api/rag/feedback` or share creation
+- `feedback`: written via `/api/rag/feedback` or share creation; merge semantics preserve thumbs / retry / share signals together
 
 ### Phase 2 Future Work (Not Yet Implemented)
 - Multi-language high-precision AST (Python, Go, Rust, Java)
 - Incremental indexing (currently full rebuild on every ingest)
 - Upstash namespace separation for code_summary vs core chunks
 - K2 server-side metadata filter POC (Upstash `range()` prefix is current approach)
-- Monitoring/alerting system (Phase 8 in checklist)
+- External dashboarding beyond the current Redis-backed daily report + notifier pipeline
 
 ## 14) Known Risks & Constraints
 - Markdown renderer currently intentionally constrained; Phase 5 needed for full feature set
