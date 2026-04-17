@@ -24,6 +24,128 @@ import { mergeResults, toScoredChunks, buildDiagnosticSnapshots } from '../../li
 import { rerank } from '../../lib/rag/retrieval/rerank.js';
 import type { RetrievalDiagnostics, ScoredChunk } from '../../lib/rag/types.js';
 import { classifyIntent, executeAnalyticsQuery } from '../../lib/rag/intents/index.js';
+import { fetchFileContent } from '../../lib/rag/github/fetchers.js';
+
+// ═══ Code Fetch Stage ════════════════════════════════════════════
+
+const CODE_FETCH_MAX_FILES = 3;
+const CODE_FETCH_PER_FILE_CHARS = 2500;
+const CODE_FETCH_TOTAL_CHARS = 6000;
+const CODE_FETCH_TIMEOUT_MS = 3000;
+
+interface CodeFetchResult {
+  codeContext: string;
+  fetchedFiles: string[];
+  failedFiles: Array<{ path: string; reason: string }>;
+  usedSummaryOnlyFallback: boolean;
+}
+
+/** Extract a window of code around a symbol match, or return file head */
+function extractCodeWindow(content: string, symbolNames: string[], maxChars: number): string {
+  // Try to find a symbol match and extract surrounding context
+  for (const symbol of symbolNames) {
+    const idx = content.indexOf(symbol);
+    if (idx === -1) continue;
+
+    // Find line boundaries around the match
+    const lines = content.split('\n');
+    let currentPos = 0;
+    let matchLine = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (currentPos + lines[i].length >= idx) {
+        matchLine = i;
+        break;
+      }
+      currentPos += lines[i].length + 1;
+    }
+
+    // Extract window: 50 lines before, 100 lines after
+    const startLine = Math.max(0, matchLine - 50);
+    const endLine = Math.min(lines.length, matchLine + 100);
+    const window = lines.slice(startLine, endLine).join('\n');
+    return window.slice(0, maxChars);
+  }
+
+  // No symbol match — return file head
+  return content.slice(0, maxChars);
+}
+
+/** Fetch actual source code for code_summary chunks to enrich the answer context */
+async function codeFetchStage(
+  chunks: ScoredChunk[],
+  repo: string,
+  token: string,
+): Promise<CodeFetchResult> {
+  // Collect candidate files from code_summary chunks
+  const candidates: Array<{ path: string; symbolNames: string[]; score: number }> = [];
+  for (const sc of chunks) {
+    const m = sc.chunk.metadata;
+    if (m.type === 'code_summary' && m.filePath) {
+      candidates.push({
+        path: m.filePath,
+        symbolNames: m.symbolNames ?? [],
+        score: sc.score,
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { codeContext: '', fetchedFiles: [], failedFiles: [], usedSummaryOnlyFallback: true };
+  }
+
+  // Take top N by score (already sorted from rerank)
+  const selected = candidates.slice(0, CODE_FETCH_MAX_FILES);
+
+  const fetchedFiles: string[] = [];
+  const failedFiles: Array<{ path: string; reason: string }> = [];
+  const codeBlocks: string[] = [];
+  let totalChars = 0;
+
+  // Fetch with overall timeout
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CODE_FETCH_TIMEOUT_MS);
+
+  try {
+    const results = await Promise.all(
+      selected.map(async (candidate) => {
+        if (controller.signal.aborted) return null;
+        try {
+          const content = await fetchFileContent(repo, candidate.path, token);
+          if (!content) {
+            failedFiles.push({ path: candidate.path, reason: 'not_found' });
+            return null;
+          }
+          return { ...candidate, content };
+        } catch {
+          failedFiles.push({ path: candidate.path, reason: 'fetch_error' });
+          return null;
+        }
+      }),
+    );
+
+    for (const result of results) {
+      if (!result) continue;
+      if (totalChars >= CODE_FETCH_TOTAL_CHARS) break;
+
+      const remaining = CODE_FETCH_TOTAL_CHARS - totalChars;
+      const maxChars = Math.min(CODE_FETCH_PER_FILE_CHARS, remaining);
+      const window = extractCodeWindow(result.content, result.symbolNames, maxChars);
+
+      codeBlocks.push(`--- ${result.path} ---\n${window}`);
+      fetchedFiles.push(result.path);
+      totalChars += window.length;
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (codeBlocks.length === 0) {
+    return { codeContext: '', fetchedFiles: [], failedFiles, usedSummaryOnlyFallback: true };
+  }
+
+  const codeContext = `[Live source code — prefer this over summaries when answering implementation questions]\n\n${codeBlocks.join('\n\n')}`;
+  return { codeContext, fetchedFiles, failedFiles, usedSummaryOnlyFallback: false };
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -291,6 +413,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       counts: diagnostics.counts,
     }));
 
+    // 6. Code fetch stage — only for code queries with code_summary hits
+    let codeContextPrefix = '';
+    if (category === 'code') {
+      try {
+        const codeFetch = await codeFetchStage(chunks, repo, token);
+        if (codeFetch.codeContext) {
+          codeContextPrefix = codeFetch.codeContext + '\n\n';
+        }
+        if (codeFetch.fetchedFiles.length > 0 || codeFetch.failedFiles.length > 0) {
+          console.log(JSON.stringify({
+            type: 'code_fetch',
+            repo,
+            fetchedFiles: codeFetch.fetchedFiles,
+            failedFiles: codeFetch.failedFiles,
+            usedSummaryOnlyFallback: codeFetch.usedSummaryOnlyFallback,
+          }));
+        }
+      } catch (codeFetchErr) {
+        console.log(JSON.stringify({
+          type: 'code_fetch_error',
+          repo,
+          error: codeFetchErr instanceof Error ? codeFetchErr.message : 'Unknown error',
+        }));
+        // Degrade gracefully — answer from summaries only
+      }
+    }
+
+    // Merge code context with analytics context
+    const fullContextPrefix = codeContextPrefix + (analyticsContext || '');
+
     const wantStream = req.body?.stream === true;
 
     if (wantStream) {
@@ -311,7 +463,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         question,
         createdAt: Date.now(),
         contextText,
-        contextPrefix: analyticsContext || undefined,
+        contextPrefix: fullContextPrefix || undefined,
         sources,
       });
       await setStreamSessionProgress(requestId, { lastSeq: 0, partialAnswer: '' });
@@ -336,7 +488,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       let seq = 0;
       try {
-        const generator = generateAnswerStream(question, repo, chunks, analyticsContext || undefined);
+        const generator = generateAnswerStream(question, repo, chunks, fullContextPrefix || undefined);
 
         // --- Heartbeat: send ping every 20s to prevent proxy timeout ---
         const startHeartbeat = () => {
@@ -411,7 +563,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } else {
       // --- Non-streaming (backwards compatible) ---
-      const result = await generateAnswer(question, repo, chunks, analyticsContext || undefined);
+      const result = await generateAnswer(question, repo, chunks, fullContextPrefix || undefined);
       return res.status(200).json(result);
     }
   } catch (err) {
