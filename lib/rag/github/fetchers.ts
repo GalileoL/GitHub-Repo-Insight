@@ -574,12 +574,55 @@ async function fetchRepoTree(repo: string, token?: string): Promise<{ paths: Arr
   return { paths, headSha: tree.sha };
 }
 
-/** Fetch the raw content of a single file via the GitHub Contents API */
+/** Reason a single file fetch failed, surfaced into eval events. */
+export type FileFetchFailureReason =
+  | 'not_found'
+  | 'forbidden'
+  | 'too_large'
+  | 'timeout'
+  | 'rate_limited'
+  | 'unknown';
+
+/** Result from a single file fetch attempt. Either content or a classified reason. */
+export type FileFetchResult =
+  | { ok: true; content: string }
+  | { ok: false; reason: FileFetchFailureReason; status?: number };
+
+const FETCH_FILE_TIMEOUT_MS = 2500;
+
+function classifyFetchStatus(status: number): FileFetchFailureReason {
+  if (status === 404) return 'not_found';
+  if (status === 403) return 'forbidden';
+  if (status === 429) return 'rate_limited';
+  if (status === 413) return 'too_large';
+  return 'unknown';
+}
+
+/**
+ * Fetch the raw content of a single file via the GitHub Contents API.
+ *
+ * Returns `null` for backwards compatibility with callers that only need the
+ * content; use `fetchFileContentDetailed` when the failure reason matters for
+ * evaluation or retries.
+ */
 export async function fetchFileContent(
   repo: string,
   filePath: string,
   token?: string,
 ): Promise<string | null> {
+  const result = await fetchFileContentDetailed(repo, filePath, token);
+  return result.ok ? result.content : null;
+}
+
+/** Detailed variant of fetchFileContent that classifies failures. */
+export async function fetchFileContentDetailed(
+  repo: string,
+  filePath: string,
+  token?: string,
+): Promise<FileFetchResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_FILE_TIMEOUT_MS);
+
   try {
     const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
     const res = await fetch(`${GITHUB_API}/repos/${repo}/contents/${encodedPath}`, {
@@ -587,11 +630,21 @@ export async function fetchFileContent(
         Accept: 'application/vnd.github.raw+json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      signal: controller.signal,
     });
-    if (!res.ok) return null;
-    return res.text();
-  } catch {
-    return null;
+
+    if (!res.ok) {
+      return { ok: false, reason: classifyFetchStatus(res.status), status: res.status };
+    }
+
+    return { ok: true, content: await res.text() };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { ok: false, reason: 'timeout' };
+    }
+    return { ok: false, reason: 'unknown' };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

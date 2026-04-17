@@ -24,14 +24,26 @@ interface AnswerCardProps {
   onEdit?: (answer: string) => void;
 }
 
+function renderDiffNodes(parts: Array<{ added?: boolean; removed?: boolean; value: string }>) {
+  return parts.map((part, idx) => {
+    const className = part.added
+      ? 'text-accent-green'
+      : part.removed
+      ? 'text-accent-red line-through'
+      : '';
+
+    return (
+      <span key={idx} className={className}>
+        {part.value}
+      </span>
+    );
+  });
+}
+
 export default function AnswerCard({ answer, previousAnswer, isLoading, streamStatus = 'idle', onCancel, onRetry, onShare, onEdit }: AnswerCardProps) {
   const isStreaming = streamStatus === 'streaming' || streamStatus === 'connecting' || streamStatus === 'reconnecting';
   const [editing, setEditing] = useState(false);
-  const [editedText, setEditedText] = useState(answer);
-
-  useEffect(() => {
-    setEditedText(answer);
-  }, [answer]);
+  const [editedText, setEditedText] = useState('');
 
   // Keyboard shortcut: Escape cancels active streaming.
   useEffect(() => {
@@ -55,32 +67,25 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
     previousAnswer.length < 12000 &&
     answer.length < 12000;
 
-  const [diffNodes, setDiffNodes] = useState<React.ReactNode[] | null>(null);
+  const diffKey = shouldComputeDiff ? `${previousAnswer}\u0000${answer}` : null;
+  const shouldComputeDiffOnMainThread = shouldComputeDiff && answer.length + (previousAnswer?.length ?? 0) < 6000;
+  const [workerDiffResult, setWorkerDiffResult] = useState<{ key: string; nodes: React.ReactNode[] } | null>(null);
   const diffWorkerRef = useRef<Worker | null>(null);
 
-  useEffect(() => {
-    if (!shouldComputeDiff) {
-      setDiffNodes(null);
-      return;
+  const diffNodes = useMemo(() => {
+    if (!shouldComputeDiff || !previousAnswer || !diffKey) {
+      return null;
     }
 
-    // For moderately sized text, compute diff on main thread.
-    if (answer.length + (previousAnswer?.length ?? 0) < 6000) {
-      const diff = diffWords(previousAnswer!, answer);
-      setDiffNodes(
-        diff.map((part, idx) => {
-          const className = part.added
-            ? 'text-accent-green'
-            : part.removed
-            ? 'text-accent-red line-through'
-            : '';
-          return (
-            <span key={idx} className={className}>
-              {part.value}
-            </span>
-          );
-        }),
-      );
+    if (shouldComputeDiffOnMainThread) {
+      return renderDiffNodes(diffWords(previousAnswer, answer));
+    }
+
+    return workerDiffResult?.key === diffKey ? workerDiffResult.nodes : null;
+  }, [answer, diffKey, previousAnswer, shouldComputeDiff, shouldComputeDiffOnMainThread, workerDiffResult]);
+
+  useEffect(() => {
+    if (!shouldComputeDiff || !previousAnswer || !diffKey || shouldComputeDiffOnMainThread) {
       return;
     }
 
@@ -94,20 +99,7 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
     const worker = diffWorkerRef.current;
     const onMessage = (event: MessageEvent) => {
       const diff = event.data as Array<{ added?: boolean; removed?: boolean; value: string }>;
-      setDiffNodes(
-        diff.map((part, idx) => {
-          const className = part.added
-            ? 'text-accent-green'
-            : part.removed
-            ? 'text-accent-red line-through'
-            : '';
-          return (
-            <span key={idx} className={className}>
-              {part.value}
-            </span>
-          );
-        }),
-      );
+      setWorkerDiffResult({ key: diffKey, nodes: renderDiffNodes(diff) });
     };
 
     worker.addEventListener('message', onMessage);
@@ -116,7 +108,7 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
     return () => {
       worker.removeEventListener('message', onMessage);
     };
-  }, [answer, previousAnswer, shouldComputeDiff]);
+  }, [answer, diffKey, previousAnswer, shouldComputeDiff, shouldComputeDiffOnMainThread]);
 
   const downloadMarkdown = () => {
     const blob = new Blob([answer], { type: 'text/markdown;charset=utf-8' });
@@ -130,9 +122,11 @@ export default function AnswerCard({ answer, previousAnswer, isLoading, streamSt
     URL.revokeObjectURL(url);
   };
 
-  const startEditing = () => setEditing(true);
-  const cancelEditing = () => {
+  const startEditing = () => {
     setEditedText(answer);
+    setEditing(true);
+  };
+  const cancelEditing = () => {
     setEditing(false);
   };
   const saveEditing = () => {

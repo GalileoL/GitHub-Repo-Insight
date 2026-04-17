@@ -4,6 +4,7 @@ import type { Chunk, ChunkMetadata, ScoredChunk, Source } from '../types.js';
 
 let index: Index | null = null;
 let redis: Redis | null = null;
+type IndexRangePage = Awaited<ReturnType<Index['range']>>;
 
 function getIndex(): Index {
   if (!index) {
@@ -103,20 +104,25 @@ export async function queryVectors(
   });
 }
 
-/** Fetch all chunks for a repo using range (not affected by zero-vector issues) */
-export async function fetchAllRepoChunks(
+/** Prefixes for each chunk type as built in lib/rag/chunking/* */
+const CORE_CHUNK_PREFIXES = ['readme', 'issue', 'pr', 'release', 'commits'] as const;
+const CODE_CHUNK_PREFIX = 'code' as const;
+
+async function fetchChunksByPrefix(
   repo: string,
+  prefix: string,
   typeFilter?: string[],
 ): Promise<ScoredChunk[]> {
   const normalizedRepo = normalizeRepo(repo);
   const idx = getIndex();
   const results: ScoredChunk[] = [];
-  let cursor = 0;
+  let cursor: number | string = 0;
 
   while (true) {
-    const page = await idx.range({
+    const page: IndexRangePage = await idx.range({
       cursor,
       limit: 100,
+      prefix,
       includeMetadata: true,
     });
 
@@ -140,10 +146,51 @@ export async function fetchAllRepoChunks(
     }
 
     if (!page.nextCursor) break;
-    cursor = Number(page.nextCursor);
+    cursor = page.nextCursor;
   }
 
   return results;
+}
+
+/**
+ * Fetch only non-code chunks (readme/issue/pr/release/commit) via per-prefix
+ * range scans. Iterates each core prefix separately so code_summary vectors
+ * never hit the wire — this is the physical half of K1/K2 isolation.
+ */
+export async function fetchCoreRepoChunks(
+  repo: string,
+  typeFilter?: string[],
+): Promise<ScoredChunk[]> {
+  const pages = await Promise.all(
+    CORE_CHUNK_PREFIXES.map((p) => fetchChunksByPrefix(repo, `${repo}:${p}`, typeFilter)),
+  );
+  return pages.flat();
+}
+
+/** Fetch only code_summary chunks via the dedicated prefix. */
+export async function fetchCodeSummaryChunks(repo: string): Promise<ScoredChunk[]> {
+  return fetchChunksByPrefix(repo, `${repo}:${CODE_CHUNK_PREFIX}:`);
+}
+
+/**
+ * Fetch all chunks for a repo. Kept for backwards compatibility with callers
+ * that still want everything in one pass (e.g. delete/count helpers). Prefer
+ * `fetchCoreRepoChunks` + `fetchCodeSummaryChunks` for retrieval paths.
+ */
+export async function fetchAllRepoChunks(
+  repo: string,
+  typeFilter?: string[],
+): Promise<ScoredChunk[]> {
+  const wantsCode = !typeFilter || typeFilter.length === 0 || typeFilter.includes('code_summary');
+  const wantsCore = !typeFilter || typeFilter.length === 0 ||
+    typeFilter.some((t) => t !== 'code_summary');
+
+  const calls: Promise<ScoredChunk[]>[] = [];
+  if (wantsCore) calls.push(fetchCoreRepoChunks(repo, typeFilter));
+  if (wantsCode) calls.push(fetchCodeSummaryChunks(repo));
+
+  const pages = await Promise.all(calls);
+  return pages.flat();
 }
 
 /** Delete all chunks for a repo */

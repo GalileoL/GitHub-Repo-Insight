@@ -9,17 +9,17 @@ Before marking any task as complete, every agent must do all of the following in
 1. Classify change risk (`L0` to `L3`) and determine impacted scope.
 2. Run code review with depth required by the risk level.
 3. Run tests required by the risk level (`targeted` or `full`).
-4. Run lint (`npm run lint`).
+4. Run lint (`pnpm lint`).
 5. Report risk level, review findings, and test/lint results in the final response.
 
 ## Local Pre-Commit Check (Mandatory)
 
 - Before every commit, run the local equivalent of CI job `Check`.
 - Required local commands (same order as CI):
-	1) `npx tsc -b`
-	2) `npm run lint`
-	3) `npm test`
-	4) `npx vite build`
+	1) `pnpm exec tsc -b`
+	2) `pnpm lint`
+	3) `pnpm test`
+	4) `pnpm build`
 - If any command fails, do not commit until fixed, or explicitly report the blocker.
 
 ## Project Knowledge Sync
@@ -60,7 +60,7 @@ Before marking any task as complete, every agent must do all of the following in
 - `L0`: Run targeted tests only when docs tooling is affected; otherwise tests may be skipped with explicit note. For behavior-affecting docs (e.g., API contract docs, configuration docs consumed by automation), include justification if tests are skipped.
 - `L1`: Run targeted tests covering changed config behavior.
 - `L2`: Run targeted tests covering changed code paths.
-- `L3`: Run full `npm test` (or targeted + justification when full run is infeasible).
+- `L3`: Run full `pnpm test` (or targeted + justification when full run is infeasible).
 
 `Targeted tests` means the smallest test set that exercises changed files and their directly impacted modules.
 `Docs tooling` means generators/validators/build steps for docs (for example markdown linting, docs-site build, or schema checks for docs-driven content).

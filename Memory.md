@@ -189,16 +189,16 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - External telemetry sink and dashboards
 
 ## 9) Commands
-- Install: `npm install`
-- Frontend dev: `npm run dev`
-- API dev (Vercel): `npm run dev:api`
-- Build: `npm run build`
-- Test: `npm test`
-- Lint: `npm run lint`
-- Preview: `npm run preview`
+- Install: `pnpm install`
+- Frontend dev: `pnpm dev`
+- API dev (Vercel): `pnpm dev:api`
+- Build: `pnpm build`
+- Test: `pnpm test`
+- Lint: `pnpm lint`
+- Preview: `pnpm preview`
 
 ## CI Checks
-- `.github/workflows/ci.yml`: runs `npm ci`, `npx tsc -b`, `npm run lint`, `npm test`, `npx vite build`
+- `.github/workflows/ci.yml`: runs `pnpm install --frozen-lockfile`, `pnpm exec tsc -b`, `pnpm lint`, `pnpm test`, `pnpm build`
 - Trigger scope: PRs to `main` and pushes to `main`
 
 ## 10) Environment Essentials

@@ -64,14 +64,14 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 ### Prerequisites
 
 - Node.js 18+
-- npm 9+ (or pnpm/yarn)
+- pnpm 10+
 
 ### Installation
 
 ```bash
 git clone https://github.com/your-username/github-repo-insight.git
 cd github-repo-insight
-npm install
+pnpm install
 ```
 
 ### Environment Variables
@@ -109,7 +109,7 @@ cp .env.example .env
 ### Development
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) in your browser.
@@ -117,15 +117,15 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ### Build
 
 ```bash
-npm run build
-npm run preview
+pnpm build
+pnpm preview
 ```
 
 ### Testing & Quality
 
 ```bash
-npm test
-npm run lint
+pnpm test
+pnpm lint
 ```
 
 - Tests are organized under `test/` with `test/unit/` and `test/integration/`.

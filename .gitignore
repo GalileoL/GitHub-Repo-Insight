@@ -31,3 +31,8 @@ docs/interview-prep.md
 *.sln
 *.sw?
 .vercel
+
+# AI multi-round discussion workspace (local-only)
+discussion/
+
+.omc/

@@ -29,10 +29,12 @@
 | 类型与路由设计 | Completed | 100% | `types.ts` + `router.ts` 改完，tsc+lint 通过 |
 | `code_summary` 提取器 | Completed | 100% | `code-summary.ts` + 30+ 单测全通过 |
 | ingest 接入 | Completed | 100% | 文件树拉取、优先级排序、chunk 生成、ingest 编排 |
-| K1/K2 检索隔离 | Completed | 100% | queryCategory 透传、keyword search 排除 code_summary |
+| K1 检索隔离 | Completed | 100% | queryCategory 透传、keyword search 排除 code_summary |
+| K2 物理拆分 | Completed | 100% | `fetchCoreRepoChunks` / `fetchCodeSummaryChunks` 用 `range({prefix})` 按 chunk-ID 前缀物理隔离 |
 | ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
-| Eval 事件写入 | Completed | 100% | Redis Hash 写入 retrieval/code_fetch/answer 事件 |
-| 测试设计 | Partial | 40% | 提取器单测完成，集成测试和 mock 测试待补 |
+| Eval 事件写入 | Completed | 100% | retrieval/code_fetch/answer 已写；`failedFiles` 现在带 classified `reason`（Gemini 建议 3 落地） |
+| Feedback endpoint | Not started | 0% | Task 6.3 — thumbs up/down 独立 endpoint 待做 |
+| 测试设计 | Partial | 40% | 提取器单测完成，router/code-fetch/retrieval 集成测试待补 |
 
 ### 1.2 Fixed Decisions
 
@@ -125,16 +127,16 @@
 
 ## Phase 0: Guardrails and Test Harness
 
-- **Status**: Not started
+- **Status**: Completed
 - **Goal**: 在改逻辑前确认测试入口和约束，不然后面很难稳定迭代
 - **Owner suggestion**: 先做
 
 ### TODO
 
-- [ ] 确认 `lib/**/*.test.ts` 当前是否已被 Vitest 覆盖
-- [ ] 如果未覆盖，调整 `vitest.config.ts`
-- [ ] 明确哪些模块适合纯单元测试，哪些要做集成测试
-- [ ] 为 GitHub fetch / Upstash / Redis 交互设计 mock 入口
+- [x] 确认 `lib/**/*.test.ts` 当前是否已被 Vitest 覆盖
+- [x] 如果未覆盖，调整 `vitest.config.ts`
+- [x] 明确哪些模块适合纯单元测试，哪些要做集成测试
+- [x] 为 GitHub fetch / Upstash / Redis 交互设计 mock 入口
 
 ### Acceptance
 
@@ -149,25 +151,25 @@
 
 ## Phase 1: Types and Routing
 
-- **Status**: Not started
+- **Status**: Completed
 - **Goal**: 先把类型系统和 query routing 调整到位，给后续实现建立稳定接口
 
 ### Task 1.1: Extend shared types
 
 - **Files**: `lib/rag/types.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 在 `ChunkType` 中新增 `code_summary`
-- [ ] 在 `QueryCategory` 中新增 `code`
-- [ ] 为 `ChunkMetadata` 增加：
-  - [ ] `symbolNames?: string[]`
-  - [ ] `symbolsTruncated?: boolean`
-  - [ ] `language?: string`
-  - [ ] `summaryTruncated?: boolean`
-- [ ] 新增 code fetch eval 类型
-- [ ] 新增 retrieval/answer eval 类型
+- [x] 在 `ChunkType` 中新增 `code_summary`
+- [x] 在 `QueryCategory` 中新增 `code`
+- [x] 为 `ChunkMetadata` 增加：
+  - [x] `symbolNames?: string[]`
+  - [x] `symbolsTruncated?: boolean`
+  - [x] `language?: string`
+  - [x] `summaryTruncated?: boolean`
+- [x] 新增 code fetch eval 类型
+- [x] 新增 retrieval/answer eval 类型
 
 #### Acceptance
 
@@ -177,13 +179,13 @@
 ### Task 1.2: Add code query routing
 
 - **Files**: `lib/rag/retrieval/router.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 给代码相关 query pattern 返回 `category: 'code'`
-- [ ] 为 code query 设置包含 `code_summary` 的 `typeFilter`
-- [ ] 保持原有 documentation/community/changes/general 行为不回归
+- [x] 给代码相关 query pattern 返回 `category: 'code'`
+- [x] 为 code query 设置包含 `code_summary` 的 `typeFilter`
+- [x] 保持原有 documentation/community/changes/general 行为不回归
 
 #### Acceptance
 
@@ -192,96 +194,96 @@
 
 ### Phase 1 Exit Criteria
 
-- [ ] 类型层改完
-- [ ] 路由层改完
-- [ ] 路由单测补齐
+- [x] 类型层改完
+- [x] 路由层改完
+- [ ] 路由单测补齐 (pending — noted in Remaining work)
 
 ---
 
 ## Phase 2: Code Summary Extractor
 
-- **Status**: Not started
+- **Status**: Completed
 - **Goal**: 做出一个稳定、低成本、可预测的 TS/JS 摘要提取器
 
 ### Task 2.1: Create extractor skeleton
 
 - **Files**: `lib/rag/chunking/code-summary.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 定义 `ExtractedCodeFacts` 中间结构
-- [ ] 实现 `extractCodeFacts(filePath, content)` 主入口
-- [ ] 实现 `renderCodeSummary(facts)`，输出半结构化文本
-- [ ] 实现 `buildCodeSummaryChunk(...)`
-- [ ] 定义 chunk ID 格式：`{repo}:code:{filePath}`（SHA 放 metadata `lastIndexedSha` 字段，不编码进 ID）
+- [x] 定义 `ExtractedCodeFacts` 中间结构
+- [x] 实现 `extractCodeFacts(filePath, content)` 主入口
+- [x] 实现 `renderCodeSummary(facts)`，输出半结构化文本
+- [x] 实现 `buildCodeSummaryChunk(...)`
+- [x] 定义 chunk ID 格式：`{repo}:code:{filePath}`（SHA 放 metadata `lastIndexedSha` 字段，不编码进 ID）
 
 ### Task 2.2: Implement file filtering
 
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 仅允许 `src/**`, `lib/**`, `api/**`
-- [ ] 排除：
-  - [ ] `**/*.test.*`
-  - [ ] `**/*.spec.*`
-  - [ ] `**/dist/**`
-  - [ ] `**/build/**`
-  - [ ] `**/coverage/**`
-  - [ ] `**/node_modules/**`
-  - [ ] `**/*.min.*`
-  - [ ] 明显 generated 文件
-- [ ] 增加单文件大小上限
+- [x] 仅允许 `src/**`, `lib/**`, `api/**`
+- [x] 排除：
+  - [x] `**/*.test.*`
+  - [x] `**/*.spec.*`
+  - [x] `**/dist/**`
+  - [x] `**/build/**`
+  - [x] `**/coverage/**`
+  - [x] `**/node_modules/**`
+  - [x] `**/*.min.*`
+  - [x] 明显 generated 文件
+- [x] 增加单文件大小上限
 
 ### Task 2.3: Implement TS/JS AST extraction
 
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 用 `ts.createSourceFile(...)` 解析源码
-- [ ] 提取 exported functions/classes/interfaces/types/const/default
-- [ ] 提取 top-level signatures
-- [ ] 提取 import paths
-- [ ] 提取文件级注释/JSDoc
-- [ ] 提取有限的 internal helpers
-- [ ] 生成 `kindHints`
+- [x] 用 `ts.createSourceFile(...)` 解析源码
+- [x] 提取 exported functions/classes/interfaces/types/const/default
+- [x] 提取 top-level signatures
+- [x] 提取 import paths
+- [x] 提取文件级注释/JSDoc
+- [x] 提取有限的 internal helpers
+- [x] 生成 `kindHints`
 
 ### Task 2.4: Metadata shaping
 
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 生成 `symbolNames`
-- [ ] 控制 `symbolNames` 上限
-- [ ] 给超限场景设置 `symbolsTruncated`
-- [ ] 给摘要超限场景设置 `summaryTruncated`
-- [ ] 记录 `language`
+- [x] 生成 `symbolNames`
+- [x] 控制 `symbolNames` 上限
+- [x] 给超限场景设置 `symbolsTruncated`
+- [x] 给摘要超限场景设置 `summaryTruncated`
+- [x] 记录 `language`
 
 ### Task 2.5: Fallback extraction
 
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 为非 TS/JS 文件实现 very-light regex fallback
-- [ ] Phase 1 先覆盖 Python/Go/Rust/Java/Kotlin 的最小规则
-- [ ] 对于无法提取的文件，直接跳过，不抛硬错误
+- [x] 为非 TS/JS 文件实现 very-light regex fallback
+- [x] Phase 1 先覆盖 Python/Go/Rust/Java/Kotlin 的最小规则
+- [x] 对于无法提取的文件，直接跳过，不抛硬错误
 
 ### Task 2.6: Tests
 
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 测 exported symbol 提取
-- [ ] 测 internal helper 截断
-- [ ] 测 kind hint 判定
-- [ ] 测文件白名单/黑名单
-- [ ] 测摘要长度截断
-- [ ] 测 fallback regex
+- [x] 测 exported symbol 提取
+- [x] 测 internal helper 截断
+- [x] 测 kind hint 判定
+- [x] 测文件白名单/黑名单
+- [x] 测摘要长度截断
+- [x] 测 fallback regex
 
 ### Acceptance
 
@@ -297,22 +299,22 @@
 
 ## Phase 3: Ingest Integration
 
-- **Status**: Not started
+- **Status**: Completed (two-stage priority sort simplified to entry-pattern + size sort; full weighted scoring deferred)
 - **Goal**: 让 ingest 真的生成并上载 `code_summary`
 
 ### Task 3.1: Fetch source files
 
 - **Files**: `lib/rag/github/fetchers.ts`
-- **Progress**: 0%
+- **Progress**: 90%
 
 #### TODO
 
-- [ ] 增加 repo 文件树抓取能力
-- [ ] 拉取候选源码文件内容
-- [ ] 对文件数做 cap（Phase 1 默认上限：`200`，允许后续调优）
-- [ ] 对文件筛选应用白名单和大小限制
-- [ ] 为后续增量索引预留 `lastIndexedSha` 信息
-- [ ] 实现两阶段文件优先级排序：
+- [x] 增加 repo 文件树抓取能力
+- [x] 拉取候选源码文件内容
+- [x] 对文件数做 cap（Phase 1 默认上限：`200`，允许后续调优）
+- [x] 对文件筛选应用白名单和大小限制
+- [x] 为后续增量索引预留 `lastIndexedSha` 信息
+- [ ] 实现两阶段文件优先级排序（当前仅做了 entry-pattern + size 排序，未接入 commit/PR 热度权重）：
   - 第一阶段（保底层）：白名单入口路径硬保留（`api/**/*.ts`、`lib/**/index.ts`、`src/App.tsx` 等），预估 10-30 slot
   - 第二阶段（竞争层）：剩余 slot 按综合热度分排序，初始建议权重：`changeFrequency × 0.4 + prHitCount × 0.3 + exportCount × 0.2 + fileSize反向 × 0.1`
   - 数据源：commit history（ingest 已拉取）、PR changedFiles（已有）、exports（AST 提取）
@@ -320,24 +322,24 @@
 ### Task 3.2: Generate code summary chunks
 
 - **Files**: `lib/rag/chunking/index.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 在现有 readme/issues/pulls/releases/commits 之外接入 `code_summary`
-- [ ] 保持现有 chunk 行为不回归
-- [ ] 对大型 repo 做 cap 控制
+- [x] 在现有 readme/issues/pulls/releases/commits 之外接入 `code_summary`
+- [x] 保持现有 chunk 行为不回归
+- [x] 对大型 repo 做 cap 控制
 
 ### Task 3.3: Update ingest orchestration
 
 - **Files**: `api/rag/ingest.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] ingest 时包含代码摘要 chunk
-- [ ] 保持原有 re-index 逻辑正确
-- [ ] 记录摘要 chunk 数量，必要时单独打日志
+- [x] ingest 时包含代码摘要 chunk
+- [x] 保持原有 re-index 逻辑正确
+- [x] 记录摘要 chunk 数量，必要时单独打日志
 
 ### Acceptance
 
@@ -353,37 +355,37 @@
 
 ## Phase 4: K1/K2 Retrieval Isolation
 
-- **Status**: Not started
+- **Status**: Completed (K1 logical isolation + K2 physical prefix scan shipped; tests pending)
 - **Goal**: 把代码检索从当前通用关键词检索路径中隔离出来
 
 ### Task 4.1: K1 logical isolation
 
 - **Files**: `lib/rag/retrieval/hybrid.ts`, `lib/rag/retrieval/keyword.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] `hybridSearch` 接收 `queryCategory`
-- [ ] `keywordSearch` 接收 `queryCategory`
-- [ ] 非 code query 默认不加载 `code_summary`
-- [ ] code query 才加载 `code_summary`
+- [x] `hybridSearch` 接收 `queryCategory`
+- [x] `keywordSearch` 接收 `queryCategory`
+- [x] 非 code query 默认不加载 `code_summary`
+- [x] code query 才加载 `code_summary`
 
 ### Task 4.2: K2 storage split
 
 - **Files**: `lib/rag/storage/index.ts`
-- **Progress**: 0%
+- **Progress**: 100% (物理拆分完成：chunk ID 前缀驱动的 `range({prefix})` 调用)
 
 #### TODO
 
-- [ ] 拆出 `fetchCoreRepoChunks(...)`
-- [ ] 拆出 `fetchCodeSummaryChunks(...)`
-- [ ] 明确区分“逻辑拆分”与“物理返回量下降”
-- [ ] 尝试使用 Upstash filter 降低返回量
-- [ ] 如果 filter 不够，记录为后续 namespace/cache 任务，不在这一步硬扩 scope
+- [x] 拆出 `fetchCoreRepoChunks(...)` — 并行扫描 readme/issue/pr/release/commits 前缀
+- [x] 拆出 `fetchCodeSummaryChunks(...)` — `prefix: "${repo}:code:"`
+- [x] 明确区分“逻辑拆分”与“物理返回量下降”
+- [x] Upstash `range({prefix})` POC：`@upstash/vector@1.2.3` 的 `RangeCommandPayload` 支持 `prefix`（不支持 metadata filter），这是物理 K2 的落地路径
+- [x] `fetchAllRepoChunks` 保留为兼容入口，内部调用两个拆分函数
 
 ### Task 4.3: Keyword search behavior tests
 
-- **Progress**: 0%
+- **Progress**: 30% (手动验证通过；自动化测试缺失)
 
 #### TODO
 
@@ -404,64 +406,64 @@
 
 ## Phase 5: Ask Code Fetch Stage
 
-- **Status**: Not started
+- **Status**: Completed (tests pending)
 - **Goal**: 在问答阶段按需回源源码，并保持失败可退化
 
 ### Task 5.1: Add file content fetcher
 
 - **Files**: `lib/rag/github/fetchers.ts`
-- **Progress**: 0%
+- **Progress**: 100% (新增 `fetchFileContentDetailed` 带错误分类；旧 `fetchFileContent` 保留为 null-fallback 兼容入口)
 
 #### TODO
 
-- [ ] 实现 `fetchFileContent(...)`
-- [ ] 首选 contents API
-- [ ] 明确 404 / 403 / timeout / rate limit 的错误分类
-- [ ] 对 `>100KB` 文件直接放弃（Phase 1 默认阈值，允许后续调优）
-- [ ] 视情况预留 blob/tree fallback
+- [x] 实现 `fetchFileContent(...)`
+- [x] 首选 contents API
+- [x] 明确 404 / 403 / timeout / rate limit 的错误分类（`FileFetchFailureReason = 'not_found' | 'forbidden' | 'too_large' | 'timeout' | 'rate_limited' | 'unknown'`；由 `fetchFileContentDetailed` 返回）
+- [x] 对 `>100KB` 文件直接放弃（Phase 1 默认阈值，允许后续调优）
+- [ ] 视情况预留 blob/tree fallback（仍归入后续任务；当前单 GET 配 2.5s AbortController 已足够）
 
 ### Task 5.2: Insert code fetch stage into ask.ts
 
 - **Files**: `api/rag/ask.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 在 `rerank` 后、`generateAnswer` 前插入 `codeFetchStage`
-- [ ] 只在 `category === 'code'` 时启用
-- [ ] 从命中 chunk 中提取 `filePath`
-- [ ] 用 rerank score + filepath hit + symbol hit + entry-point hit 给候选文件打分
-- [ ] 最多拉取 3 个文件
-- [ ] 设置 strict timeout：Phase 1 默认值为 **2s per file，总超时 3s**（使用 `Promise.race` 与 AbortController，允许后续调优）
-- [ ] 失败时退化到 summary-only
+- [x] 在 `rerank` 后、`generateAnswer` 前插入 `codeFetchStage`
+- [x] 只在 `category === 'code'` 时启用
+- [x] 从命中 chunk 中提取 `filePath`
+- [x] 用 rerank score + filepath hit + symbol hit + entry-point hit 给候选文件打分
+- [x] 最多拉取 3 个文件
+- [x] 设置 strict timeout：Phase 1 默认值为 **2s per file，总超时 3s**（使用 `Promise.race` 与 AbortController，允许后续调优）
+- [x] 失败时退化到 summary-only
 
 ### Task 5.3: Windowed code extraction
 
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] query 命中 `symbolNames` 时，定位 symbol 附近窗口
-  - **定位方式**：在 code fetch 阶段用正则在拉到的文件中实时搜索 symbol 名称，截取前后各 50-100 行（不在 AST 提取阶段记录行号，避免 metadata 膨胀且行号会因代码变更而过时）
-- [ ] 没命中 symbol 时，从文件头截断
-- [ ] 单文件字符上限：Phase 1 默认值 `2500 chars`
-- [ ] 总代码上下文字符上限：Phase 1 默认值 `6000 chars`
-- [ ] 截断时保证 prompt 仍可读
+- [x] query 命中 `symbolNames` 时，定位 symbol 附近窗口
+  - **定位方式**：在 code fetch 阶段用正则 in 拉到的文件中实时搜索 symbol 名称，截取前后各 50-100 行（不在 AST 提取阶段记录行号，避免 metadata 膨胀且行号会因代码变更而过时）
+- [x] 没命中 symbol 时，从文件头截断
+- [x] 单文件字符上限：Phase 1 默认值 `2500 chars`
+- [x] 总代码上下文字符上限：Phase 1 默认值 `6000 chars`
+- [x] 截断时保证 prompt 仍可读
 
 ### Task 5.4: LLM context integration
 
 - **Files**: `lib/rag/llm/index.ts`, `api/rag/ask.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 为 prompt 增加“实时源码优先于摘要”的规则
-- [ ] 保持 analytics context 与 code context 可并存
-- [ ] 避免 code context 破坏现有 source citation 行为
+- [x] 为 prompt 增加“实时源码优先于摘要”的规则
+- [x] 保持 analytics context 与 code context 可并存
+- [x] 避免 code context 破坏现有 source citation 行为
 
 ### Task 5.5: Tests
 
-- **Progress**: 0%
+- **Progress**: 0% (仍是 Remaining work)
 
 #### TODO
 
@@ -469,7 +471,7 @@
 - [ ] 测 GitHub fetch 失败时退化
 - [ ] 测 symbol window 截取优先
 - [ ] 测超大文件被跳过
-- [ ] 测非 code query 不触发回源
+- [ ] 测 non-code query 不触发回源
 
 ### Acceptance
 
@@ -480,38 +482,39 @@
 
 ## Phase 6: Evaluation Pipeline
 
-- **Status**: Not started
+- **Status**: Partial (events + helpers + reason classification shipped; feedback endpoint outstanding)
 - **Goal**: 给代码检索和回源效果建立可量化记录
 
 ### Task 6.1: Add storage helpers
 
 - **Files**: `lib/rag/storage/index.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 新增 `writeEvalEvent(...)`
-- [ ] 新增 `writeEvalFeedback(...)`
-- [ ] key 使用 `rag:eval:{requestId}`
-- [ ] 24h TTL
+- [x] 新增 `writeEvalEvent(...)`
+- [x] 新增 `writeEvalFeedback(...)`
+- [x] key 使用 `rag:eval:{requestId}`
+- [x] 24h TTL
 
 ### Task 6.2: Write retrieval/code_fetch/answer events
 
 - **Files**: `api/rag/ask.ts`
-- **Progress**: 0%
+- **Progress**: 100% (`failedFiles[i].reason` 现在透传 `FileFetchFailureReason`)
 
 #### TODO
 
-- [ ] 写 `retrieval`
-- [ ] code path 写 `code_fetch`
-- [ ] 写 `answer`
-- [ ] 失败路径写 `fallbackReason`
-- [ ] 记录 `matchedBy`, `selectedFiles`, `failedFiles`, `usedSummaryOnlyFallback`
+- [x] 写 `retrieval`
+- [x] code path 写 `code_fetch`
+- [x] 写 `answer`
+- [x] 失败路径写 `fallbackReason`
+- [x] 记录 `matchedBy`, `selectedFiles`, `failedFiles`, `usedSummaryOnlyFallback`
+  - [x] **follow-up**: `failedFiles[i].reason` 现在取自 `fetchFileContentDetailed`，包含 `not_found | forbidden | too_large | timeout | rate_limited | unknown`（Gemini 建议 3 落地）
 
 ### Task 6.3: Feedback wiring
 
 - **Files**: `api/rag/share.ts` and/or new `api/rag/feedback.ts`
-- **Progress**: 0%
+- **Progress**: 0% (listed in Remaining work)
 
 #### TODO
 
@@ -527,7 +530,7 @@
 
 ## Phase 7: Documentation Sync and Hardening
 
-- **Status**: Not started
+- **Status**: In progress
 - **Goal**: 实现完成后收尾，避免知识漂移
 
 ### TODO
@@ -535,7 +538,7 @@
 - [ ] 根据真实实现更新 `Memory.md`
 - [ ] 如果有用户可见能力变化，再更新 `README.md`
 - [ ] 补充实现说明到 `discussion/summary.md` 之外的长期文档
-- [ ] 记录 Phase 2 待办：多语言规则、namespace、增量索引
+- [ ] 记录 Phase 2 待办：多语言规则、namespace、增量索引、K2 物理过滤 POC、`failedFiles` reason 分类、两阶段文件优先级排序
 
 ### Acceptance
 
@@ -544,233 +547,143 @@
 
 ---
 
-## 5. Suggested Work Breakdown for Multiple Models
+## Phase 8: Production-Grade Monitoring System (Revised)
 
-### Worker A: Types + Router + Storage Eval Skeleton
+- **Status**: Not started
+- **Goal**: 构建分布式、低耦合的监控体系，拆分为“索引化日报管线”和“带抑制机制的实时告警”两套子系统。
 
-- `lib/rag/types.ts`
-- `lib/rag/retrieval/router.ts`
-- `lib/rag/storage/index.ts` 中的 eval helper
+### Phase 8 Fixed Decisions
 
-### Worker B: Code Summary Extractor + Tests
+- 继续使用 `rag:eval:{requestId}` 作为请求级明细存储，不新增第二份事件明细结构。
+- 日报聚合不再依赖 `SCAN rag:eval:*`，改为基于按天索引的 requestId 集合。
+- 实时告警必须使用 Redis 状态，而不是进程内内存计数。
+- 告警发送必须经过 notifier 抽象层，不允许业务代码直接调用 Resend/Webhook SDK。
+- `feedback` 采集属于监控闭环的一部分，但不阻塞日报与告警主链路先落地。
 
-- `lib/rag/chunking/code-summary.ts`
-- 对应 unit tests
+### Phase 8 Tunable Defaults
 
-### Worker C: Ingest Integration
+以下为 Phase 8 的默认值，属于初始建议值，不是不可变规范：
 
-- `lib/rag/github/fetchers.ts`
-- `lib/rag/chunking/index.ts`
-- `api/rag/ingest.ts`
+- `rag:eval:index:{YYYY-MM-DD}` 默认 TTL：`48h`
+- 告警抑制窗口默认值：`1h`
+- GitHub rate limit 低水位默认阈值：`100`
+- timeout streak 默认阈值：`5`
+- 日报执行时间默认值：每日 `01:00`
 
-### Worker D: Ask Code Fetch Stage
+建议后续实现时对应环境变量：
+- `EVAL_INDEX_TTL_HOURS`
+- `ALERT_SUPPRESS_SECONDS`
+- `ALERT_GITHUB_RATE_LIMIT_REMAINING`
+- `ALERT_TIMEOUT_STREAK`
 
-- `api/rag/ask.ts`
-- `lib/rag/llm/index.ts`
-- 相关 tests
+### Task 8.1: Secondary Indexing for Daily Reporting
 
-### Worker E: Retrieval Isolation
+- **Files**: `lib/rag/storage/index.ts`
+- **Progress**: 0%
 
-- `lib/rag/retrieval/hybrid.ts`
-- `lib/rag/retrieval/keyword.ts`
-- `lib/rag/storage/index.ts` 中的 chunk fetch split
+#### TODO
 
-### Coordination Notes
+- [ ] 修改 `writeEvalEvent`，在写入 Hash 的同时，将 `requestId` 存入 Redis Set：`rag:eval:index:{YYYY-MM-DD}`。
+- [ ] 为索引 Set 设置可配置 TTL，Phase 1 默认值 `48h`。
+- [ ] 明确索引粒度为 `requestId`，同一请求多次 `writeEvalEvent` 只通过 `SADD` 去重一次。
+- [ ] 在实现说明中写清楚：请求量按 request 统计，不按 event field 数量统计。
 
-- `types.ts` 必须优先，因为后续多条线都会依赖
-- `code-summary.ts` 和 `ask.ts` 可以并行，但双方要对齐 metadata shape
-- `storage/index.ts` 是共享热点文件，按以下分区规则避免冲突：
-  - **Worker A（eval helper）**：只在文件末尾新增 `writeEvalEvent` / `writeEvalFeedback` 函数，不修改已有函数
-  - **Worker E（chunk fetch split）**：只在 `fetchAllRepoChunks` 附近新增 `fetchCoreRepoChunks` / `fetchCodeSummaryChunks`，不触碰 eval 区域
-  - 两者互不交叉，合并时无冲突
+### Task 8.2: Distributed Alerting Logic
 
----
+- **Files**: `lib/admin/alert-manager.ts` (New)
+- **Progress**: 0%
 
-## 6. Checklists for Handoff
+#### TODO
 
-## 6.1 If handing off mid-implementation
+- [ ] 将告警分成两类：
+  - [ ] `streak-based alerts`：例如连续 timeout / 连续 5xx
+  - [ ] `threshold-based alerts`：例如 GitHub rate limit 过低
+- [ ] 为 `streak-based alerts` 实现 Redis `INCR` 计数，并明确 reset 语义：
+  - [ ] 失败时递增
+  - [ ] 成功时清零或删除 counter key
+- [ ] 为 `threshold-based alerts` 实现无状态阈值检查，不引入无意义的 streak counter。
+- [ ] 实现告警抑制：发送告警前检查 suppress key，发送后写入 suppress key。
+- [ ] 将 suppress key 粒度明确为至少 `rag:alert:suppress:{type}:{repo}`，必要时允许扩展到 `:{route}`。
+- [ ] 集成到 `ask.ts` 和 `ingest.ts` 的错误处理路径，但不要在底层 fetcher 中直接发通知。
 
-下一位模型接手前应先补充：
+### Task 8.3: Notifier Abstraction Layer
 
-- [ ] 已修改文件列表
-- [ ] 已完成阶段
-- [ ] 未完成 TODO
-- [ ] 当前失败的测试或 lint
-- [ ] 是否存在临时 stub / mock / TODO 注释
+- **Files**: `lib/admin/notifier.ts` (New)
+- **Progress**: 0%
 
-建议把这些内容直接附加到本文档最底部，不要散落在聊天里。
+#### TODO
 
-## 6.2 Progress Log Template
+- [ ] 定义 `NotificationPayload` 接口。
+- [ ] 暴露统一入口，例如 `sendOpsNotification(payload)`。
+- [ ] 实现多通道降级链路：
+  - [ ] 实时告警默认 `Webhook -> Resend -> structured log`
+  - [ ] 日报默认 `Resend -> structured log`
+- [ ] 支持根据告警级别（INFO/WARN/CRITICAL）和通知场景（daily report / live alert）路由不同通道。
+- [ ] 约定在无外部通知能力时，`structured log` 也算最小可运行退化。
 
-接手时可复制以下模板：
+### Task 8.4: Indexed Daily Aggregator
 
-```md
-## Progress Update (YYYY-MM-DD HH:mm)
+- **Files**: `lib/admin/metrics-aggregator.ts` (New), `lib/admin/report-renderer.ts` (New)
+- **Progress**: 0%
 
-- Current phase:
-- Completed:
-  - 
-- In progress:
-  - 
-- Blocked:
-  - 
-- Next recommended step:
-  - 
-- Files touched:
-  - 
-- Tests run:
-  - 
-- Known risks:
-  - 
-```
+#### TODO
 
----
+- [ ] 从近两天的 `rag:eval:index:{YYYY-MM-DD}` 读取 requestId 列表，再按 event timestamp 截最近 24h。
+- [ ] 使用 `SMEMBERS`/批量读取替代全库 `SCAN`。
+- [ ] 并行（Batch）拉取 `rag:eval:{requestId}` Hash 数据进行指标计算。
+- [ ] 第一版核心指标至少包含：
+  - [ ] total requests
+  - [ ] query category distribution
+  - [ ] code fetch trigger rate
+  - [ ] fetch success rate
+  - [ ] summary-only fallback rate
+  - [ ] top selected files
+  - [ ] failure reason distribution
+  - [ ] `answerUsedRetrievedCode` ratio
+- [ ] 将日报渲染逻辑放入 `report-renderer.ts`，不要把模板拼接塞进 route。
+- [ ] “与昨日对比”的趋势指标标记为 stretch goal，不阻塞第一版上线。
 
-## 7. Validation Strategy
+### Task 8.5: Reporting Endpoint and Cron
 
-## 7.1 Minimum test set per phase
+- **Files**: `api/admin/report.ts`, `vercel.json`
+- **Progress**: 0%
 
-- Phase 1:
-  - router unit tests
-  - type compile check
-- Phase 2:
-  - extractor unit tests
-- Phase 3:
-  - targeted ingest tests or mocked chunk generation tests
-- Phase 4:
-  - keyword/hybrid retrieval tests
-- Phase 5:
-  - mocked `ask.ts` code fetch flow tests
-- Phase 6:
-  - Redis helper tests or mocked storage tests
+#### TODO
 
-## 7.2 Final pre-commit checks
+- [ ] 将 `api/admin/report.ts` 保持为薄 orchestration 层，只负责鉴权、调用 aggregator 和 notifier。
+- [ ] 校验 `CRON_SECRET`，阻止未授权调用。
+- [ ] 部署每日凌晨的 Cron Job。
+- [ ] 支持手动调用日报接口做 smoke test。
 
-按仓库要求，提交前必须跑：
+### Task 8.6: Feedback Capture Endpoint
 
-1. `pnpm exec tsc -b`
-2. `pnpm lint`
-3. `pnpm test`
-4. `pnpm exec vite build`
+- **Files**: `api/rag/feedback.ts`
+- **Progress**: 0%
 
----
+#### TODO
 
-## 8. Is This Suitable for TDD?
+- [ ] 补齐 `feedback` 接口，允许前端回写用户赞/踩数据。
+- [ ] 复用现有 `writeEvalFeedback`，避免新增平行存储模型。
+- [ ] 明确 feedback 是 request 级补充字段，不改变日报主聚合口径。
 
-**结论：适合，但不是 100% 全栈纯 TDD；更准确地说，它适合“分层 TDD”。**
+### Acceptance
 
-### 非常适合 TDD 的部分
+- [ ] 连续模拟 10 次相同错误，验证 suppress window 内仅收到 1 次高优先级通知。
+- [ ] 调用日报接口，验证是否通过按天索引快速生成最近 24h 报表，而不是扫描全量 `rag:eval:*`。
+- [ ] 关闭外部通知能力，验证告警和日报都能降级输出到 structured log。
+- [ ] 验证同一 `requestId` 多次写 `retrieval/code_fetch/answer/feedback` 后，请求量统计仍然只记 1 次。
 
-- `router.ts` 的 code category 判定
-- `code-summary.ts` 的 AST 提取逻辑
-- `symbolNames` / 截断 / metadata shaping
-- `keyword.ts` 的 K1/K2 行为分支
-- `ask.ts` 中的候选文件评分和窗口截取逻辑
-- eval object 的组装逻辑
+### Handoff Note
 
-### 只适合“mock 驱动测试”的部分
-
-- GitHub 文件内容回源
-- Upstash Vector filter 行为
-- Redis HSET/TTL 写入
-
-这些部分仍然应该先写测试，但测试更多是：
-- mock 外部依赖
-- 验证调用路径和退化策略
-- 验证错误分类
-
-### 不建议强行纯 TDD 的部分
-
-- 第一次打通 ingest -> retrieval -> ask 的端到端联调
-
-因为这里牵涉外部 API、serverless 运行时、上下文长度和性能问题，最终还是需要一轮真实联调验证。做法上更合理的是：
-
-1. **先用 TDD 完成纯逻辑层**
-2. **再做少量集成测试**
-3. **最后做真实环境 smoke test**
-
-### 推荐测试顺序
-
-1. 先写 `router` 测试
-2. 再写 `code-summary` 测试
-3. 再写 `ask codeFetchStage` 的 mocked 行为测试
-4. 再写 `storage/eval` 测试
-5. 最后做一轮端到端 smoke test
-
-**简短判断**：
-- 如果你问“这个工作适不适合 test-driven development？”答案是：**适合，而且最好这么做**
-- 如果你问“能不能完全靠 TDD 覆盖到生产风险？”答案是：**不能，最后仍需要真实联调和性能验证**
+- 请接手模型优先确认 `RESEND_API_KEY` 是否已在环境变量中就位。
+- 若要接入 webhook 通道，请同时确认对应的 webhook endpoint / secret 是否已就位。
+- 索引 Set 对 Redis 存储有一定开销，需关注大流量下的内存占用。
+- 第一版先保证“日报 + 实时告警 + feedback 采集”三者解耦，不要为了趋势分析把 Phase 8 做成重型报表系统。
 
 ---
 
 ## 9. Immediate Next Step
 
-如果现在开始实现，推荐顺序是：
-
-1. Phase 0：先确认测试入口
-2. Phase 1：改 `types.ts` + `router.ts`
-3. Phase 2：写 `code-summary.ts` 及其测试
-
-这是最稳的起手式，因为它最容易被后续模型接手，而且能最快把核心接口固定下来。
-
----
-
-## Progress Update (2026-04-17 14:30)
-
-- Current phase: Phase 2 (extractor complete, environment blocker resolved)
-- Completed:
-  - Phase 0: Confirmed `test/` directory structure, vitest config includes `test/**/*.test.ts`
-  - Phase 1 Task 1.1: `lib/rag/types.ts` — added `code_summary` ChunkType, `code` QueryCategory, `ChunkMetadata` new fields (`symbolNames`, `symbolsTruncated`, `language`, `summaryTruncated`, `lastIndexedSha`), `ExtractedCodeFacts` interface, 3 eval event interfaces
-  - Phase 1 Task 1.2: `lib/rag/retrieval/router.ts` — filePatterns now route to `category: 'code'` with `typeFilter: ['code_summary', 'pr', 'commit', 'readme']`; added extra code patterns (`method`, `handler`, `hook`, `component`, `import`, `export`)
-  - Phase 2 Tasks 2.1-2.5: `lib/rag/chunking/code-summary.ts` — full implementation: file filtering, TS/JS AST extraction via `ts.createSourceFile`, regex fallback for py/go/rs/java/kt, semi-structured rendering, chunk building with symbolNames truncation, batch processing
-  - Phase 2 Task 2.6: `test/unit/lib/rag/chunking/code-summary.test.ts` — 30+ test cases written covering all modules
-- In progress:
-  - None
-- Blocked:
-  - `pnpm lint` still reports pre-existing `react-hooks/set-state-in-effect` violations in `src/features/rag/components/AnswerCard.tsx` and `src/pages/AuthCallback.tsx`.
-  - `pnpm exec tsc -b` passes cleanly on the current tree.
-- Next recommended step:
-  - Proceed to Phase 3 (ingest integration) and Phase 4 (K1/K2 isolation)
-  - Keep using the pnpm + WASM/WASI dependency path already captured in `package.json` and `scripts/`
-- Files touched:
-  - `lib/rag/types.ts` (modified)
-  - `lib/rag/retrieval/router.ts` (modified)
-  - `lib/rag/chunking/code-summary.ts` (created)
-  - `test/unit/lib/rag/chunking/code-summary.test.ts` (created)
-- Tests run:
-  - `pnpm exec tsc -b` ✅
-  - `pnpm test` ✅
-  - `pnpm build` ✅
-  - `pnpm lint` ❌ (pre-existing frontend hook-rule violations outside this feature)
-- Known risks:
-  - None from our changes; all are additive type/interface extensions and a new file
-
-## Progress Update (2026-04-17 17:15)
-
-- Current phase: Phase 7 (documentation sync)
-- Completed (all phases):
-  - Phase 1-2: Types, routing, code summary extractor + 30 unit tests (commit ea9ecc9)
-  - Phase 3: Ingest integration — `fetchRepoTree`, `fetchFileContent`, `fetchRepoSourceFiles` in fetchers.ts; `chunkCodeSummaries` integrated in chunking/index.ts; ingest.ts fetches source files in parallel (commit 467ed05)
-  - Phase 4: K1 retrieval isolation — `queryCategory` passthrough in hybrid.ts/keyword.ts; code_summary excluded from non-code keyword search (commit 1ef8b68)
-  - Phase 5: Code fetch stage — `codeFetchStage` in ask.ts with symbol windowing, 3-file cap, 3s timeout, graceful degradation; LLM prompt updated for live code (commit 08de436)
-  - Phase 6: Eval pipeline — `writeEvalEvent`/`writeEvalFeedback` in storage; retrieval/code_fetch/answer events written fire-and-forget in ask.ts (commit 4026a51)
-- Files touched (cumulative):
-  - `lib/rag/types.ts` — RawSourceFile, sourceFiles/headSha on RawRepoData
-  - `lib/rag/chunking/code-summary.ts` — created (Phase 2)
-  - `lib/rag/chunking/index.ts` — integrated chunkCodeSummaries
-  - `lib/rag/github/fetchers.ts` — fetchRepoTree, fetchFileContent, fetchRepoSourceFiles
-  - `lib/rag/retrieval/hybrid.ts` — queryCategory param
-  - `lib/rag/retrieval/keyword.ts` — K1 isolation logic
-  - `lib/rag/retrieval/router.ts` — code category (Phase 1)
-  - `lib/rag/storage/index.ts` — writeEvalEvent, writeEvalFeedback
-  - `lib/rag/llm/index.ts` — system prompt update for live code
-  - `api/rag/ask.ts` — codeFetchStage, eval writes, fullContextPrefix
-  - `api/rag/ingest.ts` — parallel source file fetch
-  - `api/rag/resume.ts` — category passthrough
-  - `test/unit/lib/rag/chunking/code-summary.test.ts` — created (Phase 2)
-- Tests run: `tsc -b` ✅ `pnpm test` ✅ (158 tests) `vite build` ✅
-- Remaining work:
-  - Integration tests for code fetch stage (mock GitHub API)
-  - Router unit tests for code category
-  - End-to-end smoke test with real repo
-  - Feedback endpoint wiring (Phase 6 Task 6.3)
+如果不开始实现监控，推荐顺序是：
+1. 补齐 `router` 的集成测试。
+2. 调优 `Phase 3` 的文件优先级打分。

@@ -25,7 +25,7 @@ import { mergeResults, toScoredChunks, buildDiagnosticSnapshots } from '../../li
 import { rerank } from '../../lib/rag/retrieval/rerank.js';
 import type { RetrievalDiagnostics, ScoredChunk } from '../../lib/rag/types.js';
 import { classifyIntent, executeAnalyticsQuery } from '../../lib/rag/intents/index.js';
-import { fetchFileContent } from '../../lib/rag/github/fetchers.js';
+import { fetchFileContentDetailed } from '../../lib/rag/github/fetchers.js';
 
 // ═══ Code Fetch Stage ════════════════════════════════════════════
 
@@ -109,16 +109,22 @@ async function codeFetchStage(
   try {
     const results = await Promise.all(
       selected.map(async (candidate) => {
-        if (controller.signal.aborted) return null;
+        if (controller.signal.aborted) {
+          failedFiles.push({ path: candidate.path, reason: 'timeout' });
+          return null;
+        }
         try {
-          const content = await fetchFileContent(repo, candidate.path, token);
-          if (!content) {
-            failedFiles.push({ path: candidate.path, reason: 'not_found' });
+          const fetched = await fetchFileContentDetailed(repo, candidate.path, token);
+          if (!fetched.ok) {
+            failedFiles.push({ path: candidate.path, reason: fetched.reason });
             return null;
           }
-          return { ...candidate, content };
-        } catch {
-          failedFiles.push({ path: candidate.path, reason: 'fetch_error' });
+          return { ...candidate, content: fetched.content };
+        } catch (fetchErr) {
+          const reason = fetchErr instanceof Error && fetchErr.name === 'AbortError'
+            ? 'timeout'
+            : 'unknown';
+          failedFiles.push({ path: candidate.path, reason });
           return null;
         }
       }),
