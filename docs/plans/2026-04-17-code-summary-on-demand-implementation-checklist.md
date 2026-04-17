@@ -34,7 +34,7 @@
 | ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
 | Eval 事件写入 | Completed | 100% | retrieval/code_fetch/answer 已写；`failedFiles` 现在带 classified `reason`（Gemini 建议 3 落地） |
 | Feedback endpoint | Not started | 0% | Task 6.3 — thumbs up/down 独立 endpoint 待做 |
-| 测试设计 | Partial | 50% | 提取器单测完成，router 与 keyword isolation 单测已补；code-fetch/retrieval 集成测试待补 |
+| 测试设计 | Partial | 60% | 提取器、router、keyword isolation、code-fetch 行为测试已补；更高层 retrieval 集成测试待补 |
 
 ### 1.2 Fixed Decisions
 
@@ -463,15 +463,15 @@
 
 ### Task 5.5: Tests
 
-- **Progress**: 0% (仍是 Remaining work)
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 测 code query 命中后会触发回源
-- [ ] 测 GitHub fetch 失败时退化
-- [ ] 测 symbol window 截取优先
-- [ ] 测超大文件被跳过
-- [ ] 测 non-code query 不触发回源
+- [x] 测 code query 命中后会触发回源
+- [x] 测 GitHub fetch 失败时退化
+- [x] 测 symbol window 截取优先
+- [x] 测超大文件被跳过
+- [x] 测 non-code query 不触发回源
 
 ### Acceptance
 

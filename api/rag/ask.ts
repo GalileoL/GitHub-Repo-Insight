@@ -42,7 +42,7 @@ interface CodeFetchResult {
 }
 
 /** Extract a window of code around a symbol match, or return file head */
-function extractCodeWindow(content: string, symbolNames: string[], maxChars: number): string {
+export function extractCodeWindow(content: string, symbolNames: string[], maxChars: number): string {
   // Try to find a symbol match and extract surrounding context
   for (const symbol of symbolNames) {
     const idx = content.indexOf(symbol);
@@ -72,7 +72,7 @@ function extractCodeWindow(content: string, symbolNames: string[], maxChars: num
 }
 
 /** Fetch actual source code for code_summary chunks to enrich the answer context */
-async function codeFetchStage(
+export async function codeFetchStage(
   chunks: ScoredChunk[],
   repo: string,
   token: string,
