@@ -382,3 +382,38 @@ export async function deleteShareEntry(shareId: string): Promise<void> {
   if (!r) return;
   await r.del(getShareKey(shareId));
 }
+
+// -----------------------------------------------------------------------------
+// Evaluation event helpers
+// -----------------------------------------------------------------------------
+
+const EVAL_TTL_SECONDS = 60 * 60 * 24; // 24h
+
+function getEvalKey(requestId: string): string {
+  return `rag:eval:${requestId}`;
+}
+
+/** Write a single evaluation event field to the Redis Hash for a request */
+export async function writeEvalEvent(
+  requestId: string,
+  eventType: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  const key = getEvalKey(requestId);
+  await r.hset(key, { [eventType]: JSON.stringify({ ...data, timestamp: Date.now() }) });
+  await r.expire(key, EVAL_TTL_SECONDS);
+}
+
+/** Write user feedback (thumbs up/down, retry) to the eval Hash */
+export async function writeEvalFeedback(
+  requestId: string,
+  feedback: Record<string, unknown>,
+): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  const key = getEvalKey(requestId);
+  await r.hset(key, { feedback: JSON.stringify({ ...feedback, timestamp: Date.now() }) });
+  await r.expire(key, EVAL_TTL_SECONDS);
+}
