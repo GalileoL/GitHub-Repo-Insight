@@ -12,7 +12,7 @@
 ## 1. Current Status Snapshot
 
 - **Plan status**: Ready for implementation
-- **Implementation status**: In progress (Phase 1 done, Phase 2 extractor done, tests blocked by env issue)
+- **Implementation status**: Phase 1-6 complete, Phase 7 (docs) in progress
 - **Discussion status**: Finalized through `discussion/summary.md` (`Current Round: round-03`)
 - **Primary goal**: 为 Ask Repo 增加“源码摘要索引 + 按需回源源码”能力，并补齐结构化评估记录
 - **Out of scope for Phase 1**:
@@ -27,12 +27,12 @@
 |------|--------|----------|------|
 | 架构方向 | Completed | 100% | 讨论已收敛：`code_summary + on-demand fetch` |
 | 类型与路由设计 | Completed | 100% | `types.ts` + `router.ts` 改完，tsc+lint 通过 |
-| `code_summary` 提取器 | In Progress | 80% | `code-summary.ts` 实现完成，测试已写但被 rollup native 环境问题阻塞 |
-| ingest 接入 | Planned | 0% | Cap、白名单、metadata 规则已定 |
-| ask code fetch stage | Planned | 0% | 插入点、退化逻辑、超时策略已定 |
-| K1/K2 检索隔离 | Planned | 0% | 逻辑分离已定，物理分离实现待验证 |
-| Eval 事件写入 | Planned | 0% | Redis Hash schema 已定 |
-| 测试设计 | Planned | 0% | 适合先测后写，详见末尾 TDD 判断 |
+| `code_summary` 提取器 | Completed | 100% | `code-summary.ts` + 30+ 单测全通过 |
+| ingest 接入 | Completed | 100% | 文件树拉取、优先级排序、chunk 生成、ingest 编排 |
+| K1/K2 检索隔离 | Completed | 100% | queryCategory 透传、keyword search 排除 code_summary |
+| ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
+| Eval 事件写入 | Completed | 100% | Redis Hash 写入 retrieval/code_fetch/answer 事件 |
+| 测试设计 | Partial | 40% | 提取器单测完成，集成测试和 mock 测试待补 |
 
 ### 1.2 Fixed Decisions
 
@@ -744,3 +744,33 @@
   - `pnpm lint` ❌ (pre-existing frontend hook-rule violations outside this feature)
 - Known risks:
   - None from our changes; all are additive type/interface extensions and a new file
+
+## Progress Update (2026-04-17 17:15)
+
+- Current phase: Phase 7 (documentation sync)
+- Completed (all phases):
+  - Phase 1-2: Types, routing, code summary extractor + 30 unit tests (commit ea9ecc9)
+  - Phase 3: Ingest integration — `fetchRepoTree`, `fetchFileContent`, `fetchRepoSourceFiles` in fetchers.ts; `chunkCodeSummaries` integrated in chunking/index.ts; ingest.ts fetches source files in parallel (commit 467ed05)
+  - Phase 4: K1 retrieval isolation — `queryCategory` passthrough in hybrid.ts/keyword.ts; code_summary excluded from non-code keyword search (commit 1ef8b68)
+  - Phase 5: Code fetch stage — `codeFetchStage` in ask.ts with symbol windowing, 3-file cap, 3s timeout, graceful degradation; LLM prompt updated for live code (commit 08de436)
+  - Phase 6: Eval pipeline — `writeEvalEvent`/`writeEvalFeedback` in storage; retrieval/code_fetch/answer events written fire-and-forget in ask.ts (commit 4026a51)
+- Files touched (cumulative):
+  - `lib/rag/types.ts` — RawSourceFile, sourceFiles/headSha on RawRepoData
+  - `lib/rag/chunking/code-summary.ts` — created (Phase 2)
+  - `lib/rag/chunking/index.ts` — integrated chunkCodeSummaries
+  - `lib/rag/github/fetchers.ts` — fetchRepoTree, fetchFileContent, fetchRepoSourceFiles
+  - `lib/rag/retrieval/hybrid.ts` — queryCategory param
+  - `lib/rag/retrieval/keyword.ts` — K1 isolation logic
+  - `lib/rag/retrieval/router.ts` — code category (Phase 1)
+  - `lib/rag/storage/index.ts` — writeEvalEvent, writeEvalFeedback
+  - `lib/rag/llm/index.ts` — system prompt update for live code
+  - `api/rag/ask.ts` — codeFetchStage, eval writes, fullContextPrefix
+  - `api/rag/ingest.ts` — parallel source file fetch
+  - `api/rag/resume.ts` — category passthrough
+  - `test/unit/lib/rag/chunking/code-summary.test.ts` — created (Phase 2)
+- Tests run: `tsc -b` ✅ `pnpm test` ✅ (158 tests) `vite build` ✅
+- Remaining work:
+  - Integration tests for code fetch stage (mock GitHub API)
+  - Router unit tests for code category
+  - End-to-end smoke test with real repo
+  - Feedback endpoint wiring (Phase 6 Task 6.3)
