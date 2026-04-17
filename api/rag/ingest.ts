@@ -47,10 +47,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // 1. Fetch raw data from GitHub (community data + source files in parallel)
-    const [rawData, sourceResult] = await Promise.all([
-      fetchRepoData(repo, githubToken),
-      fetchRepoSourceFiles(repo, githubToken).catch(() => null),
-    ]);
+    const rawData = await fetchRepoData(repo, githubToken);
+    const sourceResult = await fetchRepoSourceFiles(repo, githubToken, rawData).catch(() => null);
 
     // Merge source files into raw data for unified chunking
     if (sourceResult) {

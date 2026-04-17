@@ -28,7 +28,7 @@
 | 架构方向 | Completed | 100% | 讨论已收敛：`code_summary + on-demand fetch` |
 | 类型与路由设计 | Completed | 100% | `types.ts` + `router.ts` 改完，tsc+lint 通过 |
 | `code_summary` 提取器 | Completed | 100% | `code-summary.ts` + 30+ 单测全通过 |
-| ingest 接入 | Completed | 100% | 文件树拉取、优先级排序、chunk 生成、ingest 编排 |
+| ingest 接入 | Completed | 100% | 文件树拉取、两阶段优先级排序、chunk 生成、ingest 编排 |
 | K1 检索隔离 | Completed | 100% | queryCategory 透传、keyword search 排除 code_summary |
 | K2 物理拆分 | Completed | 100% | `fetchCoreRepoChunks` / `fetchCodeSummaryChunks` 用 `range({prefix})` 按 chunk-ID 前缀物理隔离 |
 | ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
@@ -299,13 +299,13 @@
 
 ## Phase 3: Ingest Integration
 
-- **Status**: Completed (two-stage priority sort simplified to entry-pattern + size sort; full weighted scoring deferred)
+- **Status**: Completed
 - **Goal**: 让 ingest 真的生成并上载 `code_summary`
 
 ### Task 3.1: Fetch source files
 
 - **Files**: `lib/rag/github/fetchers.ts`
-- **Progress**: 90%
+- **Progress**: 100%
 
 #### TODO
 
@@ -314,10 +314,10 @@
 - [x] 对文件数做 cap（Phase 1 默认上限：`200`，允许后续调优）
 - [x] 对文件筛选应用白名单和大小限制
 - [x] 为后续增量索引预留 `lastIndexedSha` 信息
-- [ ] 实现两阶段文件优先级排序（当前仅做了 entry-pattern + size 排序，未接入 commit/PR 热度权重）：
-  - 第一阶段（保底层）：白名单入口路径硬保留（`api/**/*.ts`、`lib/**/index.ts`、`src/App.tsx` 等），预估 10-30 slot
-  - 第二阶段（竞争层）：剩余 slot 按综合热度分排序，初始建议权重：`changeFrequency × 0.4 + prHitCount × 0.3 + exportCount × 0.2 + fileSize反向 × 0.1`
-  - 数据源：commit history（ingest 已拉取）、PR changedFiles（已有）、exports（AST 提取）
+- [x] 实现两阶段文件优先级排序：
+  - [x] 第一阶段（保底层）：白名单入口路径硬保留（`api/**/*.ts`、`lib/**/index.ts`、`src/App.tsx` 等）
+  - [x] 第二阶段（竞争层）：剩余 slot 按综合热度分排序
+  - [x] 数据源：PR changedFiles、commit message 路径/文件名命中、fetch 后的 export-count 重排、fileSize 反向
 
 ### Task 3.2: Generate code summary chunks
 
