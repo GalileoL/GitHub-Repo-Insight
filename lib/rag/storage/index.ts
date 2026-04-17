@@ -436,8 +436,23 @@ export async function deleteShareEntry(shareId: string): Promise<void> {
 
 const EVAL_TTL_SECONDS = 60 * 60 * 24; // 24h
 
+const EVAL_INDEX_TTL_HOURS = Number(process.env.EVAL_INDEX_TTL_HOURS ?? 48);
+const EVAL_INDEX_TTL_SECONDS = EVAL_INDEX_TTL_HOURS * 60 * 60;
+
 function getEvalKey(requestId: string): string {
   return `rag:eval:${requestId}`;
+}
+
+export function getEvalIndexKey(date: string): string {
+  return `rag:eval:index:${date}`;
+}
+
+/** Return all requestIds recorded for a given UTC date (YYYY-MM-DD) */
+export async function getEvalIndex(date: string): Promise<string[]> {
+  const r = getRedis();
+  if (!r) return [];
+  const members = await r.smembers(getEvalIndexKey(date));
+  return members as string[];
 }
 
 /** Write a single evaluation event field to the Redis Hash for a request */
@@ -449,8 +464,16 @@ export async function writeEvalEvent(
   const r = getRedis();
   if (!r) return;
   const key = getEvalKey(requestId);
-  await r.hset(key, { [eventType]: JSON.stringify({ ...data, timestamp: Date.now() }) });
-  await r.expire(key, EVAL_TTL_SECONDS);
+  const dateUtc = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const indexKey = getEvalIndexKey(dateUtc);
+  await Promise.all([
+    r.hset(key, { [eventType]: JSON.stringify({ ...data, timestamp: Date.now() }) }),
+    r.sadd(indexKey, requestId),
+  ]);
+  await Promise.all([
+    r.expire(key, EVAL_TTL_SECONDS),
+    r.expire(indexKey, EVAL_INDEX_TTL_SECONDS),
+  ]);
 }
 
 /** Write user feedback (thumbs up/down, retry) to the eval Hash */

@@ -549,7 +549,7 @@
 
 ## Phase 8: Production-Grade Monitoring System (Revised)
 
-- **Status**: Not started
+- **Status**: Completed
 - **Goal**: 构建分布式、低耦合的监控体系，拆分为“索引化日报管线”和“带抑制机制的实时告警”两套子系统。
 
 ### Phase 8 Fixed Decisions
@@ -579,92 +579,92 @@
 ### Task 8.1: Secondary Indexing for Daily Reporting
 
 - **Files**: `lib/rag/storage/index.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 修改 `writeEvalEvent`，在写入 Hash 的同时，将 `requestId` 存入 Redis Set：`rag:eval:index:{YYYY-MM-DD}`。
-- [ ] 为索引 Set 设置可配置 TTL，Phase 1 默认值 `48h`。
-- [ ] 明确索引粒度为 `requestId`，同一请求多次 `writeEvalEvent` 只通过 `SADD` 去重一次。
-- [ ] 在实现说明中写清楚：请求量按 request 统计，不按 event field 数量统计。
+- [x] 修改 `writeEvalEvent`，在写入 Hash 的同时，将 `requestId` 存入 Redis Set：`rag:eval:index:{YYYY-MM-DD}`。
+- [x] 为索引 Set 设置可配置 TTL，Phase 1 默认值 `48h`。
+- [x] 明确索引粒度为 `requestId`，同一请求多次 `writeEvalEvent` 只通过 `SADD` 去重一次。
+- [x] 在实现说明中写清楚：请求量按 request 统计，不按 event field 数量统计。
 
 ### Task 8.2: Distributed Alerting Logic
 
 - **Files**: `lib/admin/alert-manager.ts` (New)
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 将告警分成两类：
-  - [ ] `streak-based alerts`：例如连续 timeout / 连续 5xx
-  - [ ] `threshold-based alerts`：例如 GitHub rate limit 过低
-- [ ] 为 `streak-based alerts` 实现 Redis `INCR` 计数，并明确 reset 语义：
-  - [ ] 失败时递增
-  - [ ] 成功时清零或删除 counter key
-- [ ] 为 `threshold-based alerts` 实现无状态阈值检查，不引入无意义的 streak counter。
-- [ ] 实现告警抑制：发送告警前检查 suppress key，发送后写入 suppress key。
-- [ ] 将 suppress key 粒度明确为至少 `rag:alert:suppress:{type}:{repo}`，必要时允许扩展到 `:{route}`。
+- [x] 将告警分成两类：
+  - [x] `streak-based alerts`：例如连续 timeout / 连续 5xx
+  - [x] `threshold-based alerts`：例如 GitHub rate limit 过低
+- [x] 为 `streak-based alerts` 实现 Redis `INCR` 计数，并明确 reset 语义：
+  - [x] 失败时递增
+  - [x] 成功时清零或删除 counter key
+- [x] 为 `threshold-based alerts` 实现无状态阈值检查，不引入无意义的 streak counter。
+- [x] 实现告警抑制：发送告警前检查 suppress key，发送后写入 suppress key。
+- [x] 将 suppress key 粒度明确为至少 `rag:alert:suppress:{type}:{repo}`，必要时允许扩展到 `:{route}`。
 - [ ] 集成到 `ask.ts` 和 `ingest.ts` 的错误处理路径，但不要在底层 fetcher 中直接发通知。
 
 ### Task 8.3: Notifier Abstraction Layer
 
 - **Files**: `lib/admin/notifier.ts` (New)
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 定义 `NotificationPayload` 接口。
-- [ ] 暴露统一入口，例如 `sendOpsNotification(payload)`。
-- [ ] 实现多通道降级链路：
-  - [ ] 实时告警默认 `Webhook -> Resend -> structured log`
-  - [ ] 日报默认 `Resend -> structured log`
-- [ ] 支持根据告警级别（INFO/WARN/CRITICAL）和通知场景（daily report / live alert）路由不同通道。
-- [ ] 约定在无外部通知能力时，`structured log` 也算最小可运行退化。
+- [x] 定义 `NotificationPayload` 接口。
+- [x] 暴露统一入口，例如 `sendOpsNotification(payload)`。
+- [x] 实现多通道降级链路：
+  - [x] 实时告警默认 `Webhook -> Resend -> structured log`
+  - [x] 日报默认 `Resend -> structured log`
+- [x] 支持根据告警级别（INFO/WARN/CRITICAL）和通知场景（daily report / live alert）路由不同通道。
+- [x] 约定在无外部通知能力时，`structured log` 也算最小可运行退化。
 
 ### Task 8.4: Indexed Daily Aggregator
 
 - **Files**: `lib/admin/metrics-aggregator.ts` (New), `lib/admin/report-renderer.ts` (New)
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 从近两天的 `rag:eval:index:{YYYY-MM-DD}` 读取 requestId 列表，再按 event timestamp 截最近 24h。
-- [ ] 使用 `SMEMBERS`/批量读取替代全库 `SCAN`。
-- [ ] 并行（Batch）拉取 `rag:eval:{requestId}` Hash 数据进行指标计算。
-- [ ] 第一版核心指标至少包含：
-  - [ ] total requests
-  - [ ] query category distribution
-  - [ ] code fetch trigger rate
-  - [ ] fetch success rate
-  - [ ] summary-only fallback rate
-  - [ ] top selected files
-  - [ ] failure reason distribution
-  - [ ] `answerUsedRetrievedCode` ratio
-- [ ] 将日报渲染逻辑放入 `report-renderer.ts`，不要把模板拼接塞进 route。
+- [x] 从近两天的 `rag:eval:index:{YYYY-MM-DD}` 读取 requestId 列表，再按 event timestamp 截最近 24h。
+- [x] 使用 `SMEMBERS`/批量读取替代全库 `SCAN`。
+- [x] 并行（Batch）拉取 `rag:eval:{requestId}` Hash 数据进行指标计算。
+- [x] 第一版核心指标至少包含：
+  - [x] total requests
+  - [x] query category distribution
+  - [x] code fetch trigger rate
+  - [x] fetch success rate
+  - [x] summary-only fallback rate
+  - [x] top selected files
+  - [x] failure reason distribution
+  - [x] `answerUsedRetrievedCode` ratio
+- [x] 将日报渲染逻辑放入 `report-renderer.ts`，不要把模板拼接塞进 route。
 - [ ] “与昨日对比”的趋势指标标记为 stretch goal，不阻塞第一版上线。
 
 ### Task 8.5: Reporting Endpoint and Cron
 
 - **Files**: `api/admin/report.ts`, `vercel.json`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 将 `api/admin/report.ts` 保持为薄 orchestration 层，只负责鉴权、调用 aggregator 和 notifier。
-- [ ] 校验 `CRON_SECRET`，阻止未授权调用。
-- [ ] 部署每日凌晨的 Cron Job。
-- [ ] 支持手动调用日报接口做 smoke test。
+- [x] 将 `api/admin/report.ts` 保持为薄 orchestration 层，只负责鉴权、调用 aggregator 和 notifier。
+- [x] 校验 `CRON_SECRET`，阻止未授权调用。
+- [x] 部署每日凌晨的 Cron Job。
+- [x] 支持手动调用日报接口做 smoke test。
 
 ### Task 8.6: Feedback Capture Endpoint
 
 - **Files**: `api/rag/feedback.ts`
-- **Progress**: 0%
+- **Progress**: 100%
 
 #### TODO
 
-- [ ] 补齐 `feedback` 接口，允许前端回写用户赞/踩数据。
-- [ ] 复用现有 `writeEvalFeedback`，避免新增平行存储模型。
-- [ ] 明确 feedback 是 request 级补充字段，不改变日报主聚合口径。
+- [x] 补齐 `feedback` 接口，允许前端回写用户赞/踩数据。
+- [x] 复用现有 `writeEvalFeedback`，避免新增平行存储模型。
+- [x] 明确 feedback 是 request 级补充字段，不改变日报主聚合口径。
 
 ### Acceptance
 
