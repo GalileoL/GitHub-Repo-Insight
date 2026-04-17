@@ -188,7 +188,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 2. First-pass retrieval
     const t0 = Date.now();
-    const firstPass = await hybridSearch(question, repo, 8, typeFilter);
+    const firstPass = await hybridSearch(question, repo, 8, typeFilter, category);
     const firstPassMs = Date.now() - t0;
 
     if (firstPass.length === 0) {
@@ -215,7 +215,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else {
       const t2 = Date.now();
       const rewritePasses = await Promise.all(
-        rewriteResult.candidates.map((c) => hybridSearch(c.query, repo, 8, typeFilter)),
+        rewriteResult.candidates.map((c) => hybridSearch(c.query, repo, 8, typeFilter, category)),
       );
       rewriteSearchMs = Date.now() - t2;
 

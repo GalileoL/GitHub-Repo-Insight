@@ -84,10 +84,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 1. Classify the query to determine type filter
-      const { typeFilter } = classifyQuery(question);
+      const { typeFilter, category } = classifyQuery(question);
 
       // 2. Hybrid retrieval
-      chunks = await hybridSearch(question, repo, 8, typeFilter);
+      chunks = await hybridSearch(question, repo, 8, typeFilter, category);
 
       if (chunks.length === 0) {
         return res.status(200).json({

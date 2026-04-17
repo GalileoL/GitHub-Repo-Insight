@@ -1,5 +1,5 @@
 import MiniSearch from 'minisearch';
-import type { ScoredChunk, ChunkType } from '../types.js';
+import type { ScoredChunk, ChunkType, QueryCategory } from '../types.js';
 import { fetchAllRepoChunks } from '../storage/index.js';
 
 /**
@@ -7,16 +7,31 @@ import { fetchAllRepoChunks } from '../storage/index.js';
  *
  * Since we're in a serverless context, we rebuild the index on each request
  * from the stored chunks. This is fast for ~200 chunks.
+ *
+ * K1 isolation: non-code queries automatically exclude code_summary chunks
+ * to prevent code noise from polluting documentation/community results.
  */
 export async function keywordSearch(
   query: string,
   repo: string,
   topK: number = 20,
   typeFilter?: ChunkType[],
+  queryCategory?: QueryCategory,
 ): Promise<ScoredChunk[]> {
-  const allChunks = await fetchAllRepoChunks(repo, typeFilter);
+  // K1: exclude code_summary for non-code queries when no explicit filter is set
+  let effectiveFilter = typeFilter;
+  if (!effectiveFilter && queryCategory !== 'code') {
+    effectiveFilter = undefined; // fetch all, then post-filter
+  }
 
-  if (allChunks.length === 0) return [];
+  const allChunks = await fetchAllRepoChunks(repo, effectiveFilter);
+
+  // K1 post-filter: exclude code_summary from non-code queries
+  const filteredChunks = queryCategory === 'code'
+    ? allChunks
+    : allChunks.filter((sc) => sc.chunk.metadata.type !== 'code_summary');
+
+  if (filteredChunks.length === 0) return [];
 
   // Build MiniSearch index
   const miniSearch = new MiniSearch<{ id: string; content: string; title: string }>({
@@ -29,7 +44,7 @@ export async function keywordSearch(
     },
   });
 
-  const docs = allChunks.map((sc, i) => ({
+  const docs = filteredChunks.map((sc, i) => ({
     id: sc.chunk.id,
     _idx: i,
     content: sc.chunk.content,
@@ -41,7 +56,7 @@ export async function keywordSearch(
   const results = miniSearch.search(query);
 
   // Map back to ScoredChunk
-  const chunkMap = new Map(allChunks.map((sc) => [sc.chunk.id, sc.chunk]));
+  const chunkMap = new Map(filteredChunks.map((sc) => [sc.chunk.id, sc.chunk]));
   const maxScore = results[0]?.score ?? 1;
 
   return results.slice(0, topK).map((r) => ({
