@@ -35,7 +35,7 @@
 | Eval 事件写入 | Completed | 100% | retrieval/code_fetch/answer 已写；`failedFiles` 现在带 classified `reason`（Gemini 建议 3 落地） |
 | Feedback endpoint | Completed | 100% | `/api/rag/feedback` 已落地，share/retry/thumbs 走 request-level feedback；缓存/历史答案会清空 live `requestId`，避免旧 request 污染反馈 |
 | Monitoring / reporting | Completed | 100% | 按天 eval 索引、日报聚合、notifier、alert manager、admin report route 已落地 |
-| 测试设计 | Partial | 88% | 提取器、router、keyword isolation、code-fetch、feedback API、admin monitoring suite、`ask.ts` handler 集成测试已补；仍缺更完整的 retrieval / streaming / cron smoke 覆盖 |
+| 测试设计 | Partial | 94% | 提取器、router、keyword isolation、code-fetch、feedback API、admin monitoring suite、`ask.ts`/`resume.ts` handler 集成测试已补；剩余主要是真实 cron / webhook smoke 与更长链路的端到端覆盖 |
 
 ### 1.2 Fixed Decisions
 
@@ -799,6 +799,6 @@
 ## 9. Immediate Next Step
 
 后续如果继续推进，建议顺序是：
-1. 补齐 streaming / resume / rewrite fan-out 相关集成测试。
-2. 做真实 cron / webhook smoke test。
+1. 做真实 cron / webhook smoke test。
+2. 评估端到端测试是否要覆盖真实 provider / GitHub / Redis 依赖。
 3. 评估 Phase 2 范围：增量索引、多语言 AST、namespace 分离。

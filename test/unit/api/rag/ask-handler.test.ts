@@ -27,7 +27,29 @@ const mocks = vi.hoisted(() => ({
   incrementAlertStreak: vi.fn(),
   resetAlertStreak: vi.fn(),
   checkAndFireStreakAlert: vi.fn(),
-  ServerMetricsRecorder: vi.fn(),
+  ServerMetricsRecorder: class MockServerMetricsRecorder {
+    requestId = 'req_stream_123';
+    setChunkCount = vi.fn();
+    incrementEventCount = vi.fn();
+    incrementErrorCount = vi.fn();
+    recordError = vi.fn();
+
+    getRequestId() {
+      return this.requestId;
+    }
+
+    end() {
+      return {
+        requestId: 'req_stream_123',
+        startTime: Date.now(),
+        endTime: Date.now(),
+        duration: 10,
+        chunkCount: 1,
+        eventCount: 4,
+        errorCount: 0,
+      };
+    }
+  },
   categorizeError: vi.fn(),
   logStreamMetrics: vi.fn(),
 }));
@@ -110,6 +132,7 @@ type MockRes = {
   statusCode: number;
   body: unknown;
   headers: Record<string, string>;
+  writes: string[];
   writable: boolean;
   headersSent: boolean;
   status: (code: number) => MockRes;
@@ -134,6 +157,7 @@ function createMockRes(): MockRes {
     statusCode: 200,
     body: undefined,
     headers: {},
+    writes: [],
     writable: true,
     headersSent: false,
     status(code) {
@@ -148,13 +172,22 @@ function createMockRes(): MockRes {
     setHeader(name, value) {
       this.headers[name] = value;
     },
-    write() {
+    write(chunk) {
+      this.writes.push(chunk);
       this.headersSent = true;
     },
     end() {
       this.writable = false;
     },
   };
+}
+
+function createAsyncGenerator(chunks: string[]): AsyncGenerator<string> {
+  return (async function* stream() {
+    for (const chunk of chunks) {
+      yield chunk;
+    }
+  })();
 }
 
 function makeCodeChunk(path: string, score = 1): ScoredChunk {
@@ -225,6 +258,10 @@ describe('api/rag/ask handler integration', () => {
     mocks.resetAlertStreak.mockResolvedValue(undefined);
     mocks.incrementAlertStreak.mockResolvedValue(undefined);
     mocks.checkAndFireStreakAlert.mockResolvedValue(undefined);
+    mocks.buildSources.mockReturnValue([
+      { type: 'issue', title: 'Source', url: 'https://github.com/owner/repo/issues/1' },
+    ]);
+    mocks.buildContextText.mockReturnValue('context text');
   });
 
   it('runs the non-streaming code path end-to-end and writes aligned eval events', async () => {
@@ -320,5 +357,69 @@ describe('api/rag/ask handler integration', () => {
     expect(mocks.classifyQuery).not.toHaveBeenCalled();
     expect(mocks.generateAnswer).not.toHaveBeenCalled();
     expect(mocks.writeEvalEvent).not.toHaveBeenCalled();
+  });
+
+  it('streams SSE responses, persists session state, and writes eval events on completion', async () => {
+    mocks.generateAnswerStream.mockReturnValue(createAsyncGenerator(['hello ', 'world']));
+
+    const req = createMockReq({
+      repo: 'owner/repo',
+      question: 'Where is retryHandler defined?',
+      stream: true,
+    });
+    const res = createMockRes();
+
+    await handler(req as never, res as never);
+
+    expect(res.headers['Content-Type']).toBe('text/event-stream');
+    expect(res.headers['X-Request-ID']).toBe('req_stream_123');
+    expect(mocks.setStreamSessionSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'req_stream_123',
+      repo: 'owner/repo',
+      question: 'Where is retryHandler defined?',
+      contextText: 'context text',
+    }));
+    expect(mocks.setStreamSessionProgress).toHaveBeenCalledWith('req_stream_123', {
+      lastSeq: 0,
+      partialAnswer: '',
+    });
+    expect(mocks.deleteStreamSession).toHaveBeenCalledWith('req_stream_123');
+    expect(res.writes[0]).toContain('"type":"meta"');
+    expect(res.writes.some((chunk) => chunk.includes('"type":"delta","seq":1,"content":"hello "'))).toBe(true);
+    expect(res.writes.some((chunk) => chunk.includes('"type":"delta","seq":2,"content":"world"'))).toBe(true);
+    expect(res.writes.some((chunk) => chunk.includes('"type":"sources"'))).toBe(true);
+    expect(res.writes.some((chunk) => chunk.includes('[DONE]'))).toBe(true);
+    expect(mocks.writeEvalEvent).toHaveBeenCalledTimes(3);
+  });
+
+  it('runs rewrite fan-out searches and reranks merged results when rewrite mode is enabled', async () => {
+    const firstPassChunk = makeCodeChunk('src/first.ts', 1);
+    const rewriteChunk = makeCodeChunk('src/rewrite.ts', 2);
+
+    mocks.hybridSearch
+      .mockResolvedValueOnce([firstPassChunk])
+      .mockResolvedValueOnce([rewriteChunk]);
+    mocks.analyzeAndRewrite.mockResolvedValue({
+      analysis: { anchors: {}, riskScore: 0.8 },
+      decision: { mode: 'strong', reasonCodes: ['low_confidence'], rewriteScore: 0.8 },
+      candidates: [{ query: 'retry handler implementation', strategy: 'synonym' }],
+    });
+    mocks.mergeResults.mockReturnValue([
+      { chunk: rewriteChunk.chunk, mergedScore: 2, fromOriginal: false, sourceQueries: ['candidate'] },
+    ]);
+    mocks.toScoredChunks.mockReturnValue([rewriteChunk]);
+    mocks.rerank.mockReturnValue([rewriteChunk]);
+
+    const req = createMockReq({ repo: 'owner/repo', question: 'How does retry work?' });
+    const res = createMockRes();
+
+    await handler(req as never, res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(mocks.hybridSearch).toHaveBeenCalledTimes(2);
+    expect(mocks.hybridSearch.mock.calls[1][0]).toBe('retry handler implementation');
+    expect(mocks.mergeResults).toHaveBeenCalledTimes(1);
+    expect(mocks.toScoredChunks).toHaveBeenCalledTimes(1);
+    expect(mocks.rerank).toHaveBeenCalledWith([rewriteChunk], 'How does retry work?', 8);
   });
 });
