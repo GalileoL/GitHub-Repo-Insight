@@ -36,13 +36,14 @@ export function classifyQuery(query: string): {
     return { category: 'community', typeFilter: ['issue', 'pr'] };
   }
 
-  // File-oriented (prepared for Phase 2)
-  const filePatterns = [
+  // Code-oriented
+  const codePatterns = [
     'file', 'code', 'implement', 'where is', 'which file', 'source',
     'function', 'class', 'module', 'directory', 'folder',
+    'method', 'handler', 'hook', 'component', 'import', 'export',
   ];
-  if (filePatterns.some((p) => q.includes(p))) {
-    return { category: 'general', typeFilter: ['pr', 'commit', 'readme'] };
+  if (codePatterns.some((p) => q.includes(p))) {
+    return { category: 'code', typeFilter: ['code_summary', 'pr', 'commit', 'readme'] };
   }
 
   // General — no filter, search everything
