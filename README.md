@@ -30,8 +30,10 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 - **Ask Repo (AI)** — Ask natural-language questions about any indexed repository, powered by RAG
 - **SSE Streaming** — LLM answers stream token-by-token with a live typing cursor
 - **Multi-LLM Support** — Switch between OpenAI, DeepSeek, Groq, Gemini, and Claude via a single env var
-- **On-Demand Indexing** — One-click ingestion of README, issues, PRs, releases, and commits into a vector database
-- **Hybrid Retrieval** — Combines vector similarity + keyword search with query routing and reranking
+- **On-Demand Indexing** — One-click ingestion of README, issues, PRs, releases, commits, and **TypeScript/JavaScript source files** into a vector database
+- **Source Code Indexing** — Extracts exported symbols, signatures, imports, and JSDoc from TS/JS source files using the TypeScript Compiler API; stores as searchable `code_summary` chunks
+- **Code-Aware Q&A** — Code-related questions trigger on-demand GitHub source fetches (up to 3 files, with symbol-window extraction) for precise implementation answers
+- **Hybrid Retrieval** — Combines vector similarity + keyword search with query routing and reranking; code queries are physically isolated from prose chunks
 - **Conditional Query Rewrite** — Automatically analyzes query risk and retrieval confidence to trigger synonym expansion, query decomposition, or LLM-based reformulation for improved retrieval on vague/complex questions
 - **Shareable Answers** — Save a generated answer and its citations to a short-lived share link
 - **Cited Answers** — AI answers include clickable source citations linking back to GitHub

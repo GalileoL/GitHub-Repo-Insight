@@ -530,15 +530,15 @@
 
 ## Phase 7: Documentation Sync and Hardening
 
-- **Status**: In progress
+- **Status**: Completed
 - **Goal**: 实现完成后收尾，避免知识漂移
 
 ### TODO
 
-- [ ] 根据真实实现更新 `Memory.md`
-- [ ] 如果有用户可见能力变化，再更新 `README.md`
-- [ ] 补充实现说明到 `discussion/summary.md` 之外的长期文档
-- [ ] 记录 Phase 2 待办：多语言规则、namespace、增量索引、K2 物理过滤 POC、`failedFiles` reason 分类、两阶段文件优先级排序
+- [x] 根据真实实现更新 `Memory.md`
+- [x] 如果有用户可见能力变化，再更新 `README.md`
+- [x] 补充实现说明到 `discussion/summary.md` 之外的长期文档
+- [x] 记录 Phase 2 待办：多语言规则、namespace、增量索引、K2 物理过滤 POC、`failedFiles` reason 分类、两阶段文件优先级排序
 
 ### Acceptance
 
