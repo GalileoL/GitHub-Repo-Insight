@@ -549,7 +549,7 @@
 
 ## Phase 8: Production-Grade Monitoring System (Revised)
 
-- **Status**: Completed
+- **Status**: Needs Fixes (implementation committed ea150d1, L3 code review found critical/high issues — see Phase 8 Review Findings below)
 - **Goal**: 构建分布式、低耦合的监控体系，拆分为“索引化日报管线”和“带抑制机制的实时告警”两套子系统。
 
 ### Phase 8 Fixed Decisions
@@ -679,6 +679,117 @@
 - 若要接入 webhook 通道，请同时确认对应的 webhook endpoint / secret 是否已就位。
 - 索引 Set 对 Redis 存储有一定开销，需关注大流量下的内存占用。
 - 第一版先保证“日报 + 实时告警 + feedback 采集”三者解耦，不要为了趋势分析把 Phase 8 做成重型报表系统。
+
+---
+
+---
+
+## Phase 8 Review Findings — Required Fixes
+
+> Code review performed 2026-04-18 after commit `ea150d1`. Risk level L3.
+> All CRITICAL and HIGH items must be fixed before Phase 8 can be marked Completed.
+> Run `pnpm exec tsc -b && pnpm lint && pnpm test && pnpm build` after each fix group.
+
+### CRITICAL (blocking)
+
+- [ ] **C1 — writeEvalEvent must never throw** (`lib/rag/storage/index.ts`)
+  - Wrap entire `writeEvalEvent` body in `try { … } catch { /* best-effort */ }`
+  - Change `Promise.all([hset, sadd, expire1, expire2])` → `Promise.allSettled(...)` so one Redis failure doesn't kill the others
+  - Reason: called in `ask.ts` finally block via `void writeEvalEvent(...)`; a throw becomes an unhandled rejection that can kill the serverless lambda
+
+- [ ] **C2 — Alert-manager is dead code — wire it into ask.ts and ingest.ts** (`api/rag/ask.ts`, `api/rag/ingest.ts`)
+  - In `ask.ts` code fetch path:
+    - On file fetch timeout (`reason === 'timeout'`): `incrementAlertStreak('timeout_streak', repo)` + `checkAndFireStreakAlert('timeout_streak', repo, 5, { repo })`
+    - On other fetch failures: `incrementAlertStreak('code_fetch_failure_streak', repo)` + `checkAndFireStreakAlert('code_fetch_failure_streak', repo, 5, { repo })`
+    - On fetch fully success (0 timeout failures): `resetAlertStreak('timeout_streak', repo)`
+  - In `ingest.ts` top-level error handler:
+    - On failure: `incrementAlertStreak('ingest_failure_streak', repo)` + `checkAndFireStreakAlert('ingest_failure_streak', repo, 3, { repo })`
+    - On success: `resetAlertStreak('ingest_failure_streak', repo)`
+  - All calls wrapped in try/catch; import from `../../lib/admin/alert-manager.js`
+
+### HIGH (blocking)
+
+- [ ] **H1 — Eval hash TTL mismatch** (`lib/rag/storage/index.ts`)
+  - Change `EVAL_TTL_SECONDS` from 24h to 48h (match index set TTL)
+  - Prevents stale-hash lookups: aggregator reads index sets for 48h but hashes expire after 24h, causing empty `HGETALL` responses
+
+- [ ] **H2 — Resend `from` default is invalid** (`lib/admin/notifier.ts`)
+  - Only attempt Resend channel if `RESEND_API_KEY` AND `OPS_EMAIL_TO` AND `OPS_EMAIL_FROM` are all set
+  - Remove the `'noreply@notifications.example.com'` default entirely
+  - If `OPS_EMAIL_FROM` is missing, skip the API call and fall through to structured log
+
+- [ ] **H3 — report.ts auth/robustness hardening** (`api/admin/report.ts`)
+  - If `CRON_SECRET` env var is missing/empty → return 500 (not 401) so Vercel marks cron run as failed
+  - Replace `authHeader !== \`Bearer ${cronSecret}\`` with `crypto.timingSafeEqual` (import from `node:crypto`)
+  - Add method guard: `if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })`
+  - Validate `dateParam` matches `/^\d{4}-\d{2}-\d{2}$/`; return 400 if invalid
+  - Wrap `aggregateDailyMetrics` + `renderDailyReport` in try/catch; on error call `sendOpsNotification(...)` then return 500
+
+- [ ] **H4 — Fix 24h window in metrics-aggregator.ts** (`lib/admin/metrics-aggregator.ts`)
+  - Replace rolling `Date.now() - 24h` filter with calendar-day window derived from `dateUtc`:
+    ```ts
+    const dayStart = new Date(`${dateUtc}T00:00:00Z`).getTime();
+    const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+    // filter: timestamp >= dayStart && timestamp < dayEnd
+    ```
+
+### MEDIUM
+
+- [ ] **M1 — Fix codeFetchTriggerRate denominator** (`lib/admin/metrics-aggregator.ts`)
+  - Track `codeRequestCount` = requests where `retrieval.category === 'code'`
+  - `codeFetchTriggerRate = codeFetchCount / codeRequestCount` (not `/ totalRequests`)
+  - Remove `codeRequestsWithFetch` counter (duplicate of `codeFetchCount`)
+
+### LOW
+
+- [ ] **L1 — getEvalIndex type safety** (`lib/rag/storage/index.ts`)
+  - Filter result: `.filter((m): m is string => typeof m === 'string')`
+
+- [ ] **L2 — Alert streak key needs safety-net TTL** (`lib/admin/alert-manager.ts`)
+  - After `r.incr(streakKey)`, add `await r.expire(streakKey, 24 * 3600)` to prevent forever-growing counters if reset path is never reached
+
+- [ ] **L3 — Log Resend failure body** (`lib/admin/notifier.ts`)
+  - In `!res.ok` branch: `console.warn(JSON.stringify({ channel: 'resend', status: res.status, body: await res.text().catch(() => '') }))`
+
+### Missing Tests (required for L3)
+
+- [ ] **T1 — `lib/admin/notifier.test.ts`**
+  - All env vars missing → falls through to structured log without throwing
+  - Webhook set and fetch succeeds → webhook is called
+  - Webhook fetch throws → does not propagate
+  - Resend returns 403 → falls through to log without throwing
+  - Use `vi.stubGlobal('fetch', ...)` and `vi.spyOn(console, 'log')`
+
+- [ ] **T2 — `lib/admin/alert-manager.test.ts`**
+  - `incrementAlertStreak` calls INCR + EXPIRE
+  - `resetAlertStreak` calls DEL
+  - `checkAndFireStreakAlert` fires notification when streak >= threshold and no suppress key
+  - Does NOT fire when suppress key exists
+  - `checkThresholdAlert` fires when value <= threshold
+  - All functions never throw when Redis throws
+
+- [ ] **T3 — `lib/admin/metrics-aggregator.test.ts`**
+  - Empty index set → zero metrics without error
+  - Malformed JSON in hash field → skipped gracefully
+  - Correct calculation with sample data (2 requests, 1 code fetch, 1 failure)
+  - Division-by-zero cases → 0 rates
+
+- [ ] **T4 — `api/admin/report.test.ts`**
+  - Missing auth header → 401
+  - Wrong secret → 401
+  - Missing `CRON_SECRET` env var → 500
+  - POST method → 405
+  - Invalid date format → 400
+  - Valid GET with correct secret → 200 `{ ok: true, metrics }`
+  - Mock `aggregateDailyMetrics` and `sendOpsNotification`
+
+### Handoff Instructions for Next AI
+
+1. Read this section and the code in `lib/admin/`, `api/admin/report.ts`, `lib/rag/storage/index.ts`
+2. Fix items in order: C1 → C2 → H1–H4 → M1 → L1–L3 → Tests
+3. After all fixes: `pnpm exec tsc -b && pnpm lint && pnpm test && pnpm build` — all must pass
+4. Commit with message `fix: phase 8 review — harden storage, auth, metrics, wire alert-manager`
+5. Mark Phase 8 status as "Completed" in this checklist
 
 ---
 
