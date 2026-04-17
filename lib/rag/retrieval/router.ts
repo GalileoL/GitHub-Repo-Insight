@@ -7,6 +7,25 @@ export function classifyQuery(query: string): {
 } {
   const q = query.toLowerCase();
 
+  const explicitCodeLookupPatterns = [
+    /\bwhere is\b/,
+    /\bwhich file\b/,
+    /\bsource code\b/,
+    /\bwhat file\b/,
+    /\bwhich module\b/,
+    /\bwhich function\b/,
+    /\bwhich class\b/,
+    /\bwhich directory\b/,
+    /\bwhich folder\b/,
+    /\bwhich handler\b/,
+    /\bwhich hook\b/,
+    /\bwhich component\b/,
+    /\bwhere (?:do|does|is)\b.*\b(?:implement|defined|live|located)\b/,
+  ];
+  if (explicitCodeLookupPatterns.some((pattern) => pattern.test(q))) {
+    return { category: 'code', typeFilter: ['code_summary', 'pr', 'commit', 'readme'] };
+  }
+
   // Documentation-oriented
   const docPatterns = [
     'what does', 'what is', 'how to', 'how do', 'install', 'setup', 'getting started',
@@ -38,9 +57,7 @@ export function classifyQuery(query: string): {
 
   // Code-oriented
   const codePatterns = [
-    'file', 'code', 'implement', 'where is', 'which file', 'source',
-    'function', 'class', 'module', 'directory', 'folder',
-    'method', 'handler', 'hook', 'component', 'import', 'export',
+    'file', 'code', 'implement',
   ];
   if (codePatterns.some((p) => q.includes(p))) {
     return { category: 'code', typeFilter: ['code_summary', 'pr', 'commit', 'readme'] };

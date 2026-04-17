@@ -34,7 +34,7 @@
 | ask code fetch stage | Completed | 100% | 按需回源、symbol 窗口、超时退化、LLM prompt 更新 |
 | Eval 事件写入 | Completed | 100% | retrieval/code_fetch/answer 已写；`failedFiles` 现在带 classified `reason`（Gemini 建议 3 落地） |
 | Feedback endpoint | Not started | 0% | Task 6.3 — thumbs up/down 独立 endpoint 待做 |
-| 测试设计 | Partial | 40% | 提取器单测完成，router/code-fetch/retrieval 集成测试待补 |
+| 测试设计 | Partial | 45% | 提取器单测完成，router 路由单测已补；code-fetch/retrieval 集成测试待补 |
 
 ### 1.2 Fixed Decisions
 
@@ -196,7 +196,7 @@
 
 - [x] 类型层改完
 - [x] 路由层改完
-- [ ] 路由单测补齐 (pending — noted in Remaining work)
+- [x] 路由单测补齐
 
 ---
 
