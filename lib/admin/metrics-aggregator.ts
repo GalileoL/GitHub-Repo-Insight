@@ -77,6 +77,10 @@ function parseJson<T>(raw: unknown): T | null {
   }
 }
 
+function isWithinDay(timestamp: number | undefined, dayStart: number, dayEnd: number): boolean {
+  return typeof timestamp === 'number' && timestamp >= dayStart && timestamp < dayEnd;
+}
+
 async function fetchHashesBatch(
   r: Redis,
   requestIds: string[],
@@ -132,16 +136,7 @@ export async function aggregateDailyMetrics(
 
   const recentHashes = hashes.filter((h) => {
     const retrieval = parseJson<RetrievalEvent>(h.retrieval);
-    const codeFetch = parseJson<CodeFetchEvent>(h.code_fetch);
-    const answer = parseJson<AnswerEvent>(h.answer);
-    const timestamps = [
-      retrieval?.timestamp,
-      codeFetch?.timestamp,
-      answer?.timestamp,
-    ].filter((t): t is number => typeof t === 'number');
-    if (timestamps.length === 0) return false;
-    const ts = Math.max(...timestamps);
-    return ts >= dayStart && ts < dayEnd;
+    return isWithinDay(retrieval?.timestamp, dayStart, dayEnd);
   });
 
   if (recentHashes.length === 0) return empty;
@@ -167,7 +162,7 @@ export async function aggregateDailyMetrics(
 
     // Category distribution
     const category = retrieval?.category ?? retrieval?.queryCategory;
-    if (category) {
+    if (category && isWithinDay(retrieval?.timestamp, dayStart, dayEnd)) {
       const cat = category;
       categoryDistribution[cat] = (categoryDistribution[cat] ?? 0) + 1;
       if (cat === 'code') {
@@ -176,7 +171,7 @@ export async function aggregateDailyMetrics(
     }
 
     // Code fetch metrics
-    if (codeFetch) {
+    if (codeFetch && isWithinDay(codeFetch.timestamp, dayStart, dayEnd)) {
       codeFetchCount += 1;
 
       const fetched = codeFetch.fetchedFiles ?? [];
@@ -201,7 +196,7 @@ export async function aggregateDailyMetrics(
     }
 
     // Answer metrics
-    if (answer) {
+    if (answer && isWithinDay(answer.timestamp, dayStart, dayEnd)) {
       answerTotal += 1;
       if (answer.usedRetrievedCode ?? answer.hasCodeContext) {
         answerUsedCodeCount += 1;

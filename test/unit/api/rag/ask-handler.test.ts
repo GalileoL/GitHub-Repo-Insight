@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   setStreamSessionSnapshot: vi.fn(),
   setStreamSessionProgress: vi.fn(),
   deleteStreamSession: vi.fn(),
-  writeEvalEvent: vi.fn(),
+  writeEvalEventBatch: vi.fn(),
   classifyQuery: vi.fn(),
   hybridSearch: vi.fn(),
   generateAnswer: vi.fn(),
@@ -62,10 +62,11 @@ vi.mock('../../../../lib/rag/auth/index.js', () => ({
 
 vi.mock('../../../../lib/rag/storage/index.js', () => ({
   countRepoChunks: mocks.countRepoChunks,
+  normalizeRepo: (repo: string) => repo.toLowerCase(),
   setStreamSessionSnapshot: mocks.setStreamSessionSnapshot,
   setStreamSessionProgress: mocks.setStreamSessionProgress,
   deleteStreamSession: mocks.deleteStreamSession,
-  writeEvalEvent: mocks.writeEvalEvent,
+  writeEvalEventBatch: mocks.writeEvalEventBatch,
 }));
 
 vi.mock('../../../../lib/rag/retrieval/router.js', () => ({
@@ -273,25 +274,30 @@ describe('api/rag/ask handler integration', () => {
     await handler(req as never, res as never);
 
     expect(res.statusCode).toBe(200);
-    expect(mocks.fetchFileContentDetailed).toHaveBeenCalledWith('owner/repo', 'src/retry.ts', 'gh-token');
+    expect(res.body).toMatchObject({ requestId: 'non-stream-req_nonstream_123' });
+    expect(mocks.fetchFileContentDetailed).toHaveBeenCalledWith(
+      'owner/repo',
+      'src/retry.ts',
+      'gh-token',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(mocks.generateAnswer).toHaveBeenCalledTimes(1);
     expect(mocks.generateAnswer.mock.calls[0][3]).toContain('Live source code');
     expect(mocks.generateAnswer.mock.calls[0][3]).toContain('retryHandler');
 
-    expect(mocks.writeEvalEvent).toHaveBeenCalledTimes(3);
-    expect(mocks.writeEvalEvent.mock.calls[0][0]).toBe('non-stream-req_nonstream_123');
-    expect(mocks.writeEvalEvent.mock.calls[0][1]).toBe('retrieval');
-    expect(mocks.writeEvalEvent.mock.calls[0][2]).toMatchObject({ category: 'code', queryCategory: 'code' });
-    expect(mocks.writeEvalEvent.mock.calls[1][1]).toBe('code_fetch');
-    expect(mocks.writeEvalEvent.mock.calls[1][2]).toMatchObject({
-      fetchedFiles: ['src/retry.ts'],
-      summaryOnlyFallback: false,
-      usedSummaryOnlyFallback: false,
-    });
-    expect(mocks.writeEvalEvent.mock.calls[2][1]).toBe('answer');
-    expect(mocks.writeEvalEvent.mock.calls[2][2]).toMatchObject({
-      usedRetrievedCode: true,
-      hasCodeContext: true,
+    expect(mocks.writeEvalEventBatch).toHaveBeenCalledTimes(1);
+    expect(mocks.writeEvalEventBatch.mock.calls[0][0]).toBe('non-stream-req_nonstream_123');
+    expect(mocks.writeEvalEventBatch.mock.calls[0][1]).toMatchObject({
+      retrieval: expect.objectContaining({ category: 'code', queryCategory: 'code' }),
+      code_fetch: expect.objectContaining({
+        fetchedFiles: ['src/retry.ts'],
+        summaryOnlyFallback: false,
+        usedSummaryOnlyFallback: false,
+      }),
+      answer: expect.objectContaining({
+        usedRetrievedCode: true,
+        hasCodeContext: true,
+      }),
     });
 
     expect(mocks.resetAlertStreak).toHaveBeenCalledWith('timeout_streak', 'owner/repo');
@@ -317,14 +323,16 @@ describe('api/rag/ask handler integration', () => {
 
     expect(res.statusCode).toBe(200);
     expect(mocks.generateAnswer.mock.calls[0][3]).toBeUndefined();
-    expect(mocks.writeEvalEvent.mock.calls[1][2]).toMatchObject({
-      fetchedFiles: [],
-      summaryOnlyFallback: true,
-      usedSummaryOnlyFallback: true,
-    });
-    expect(mocks.writeEvalEvent.mock.calls[2][2]).toMatchObject({
-      usedRetrievedCode: false,
-      hasCodeContext: false,
+    expect(mocks.writeEvalEventBatch.mock.calls[0][1]).toMatchObject({
+      code_fetch: expect.objectContaining({
+        fetchedFiles: [],
+        summaryOnlyFallback: true,
+        usedSummaryOnlyFallback: true,
+      }),
+      answer: expect.objectContaining({
+        usedRetrievedCode: false,
+        hasCodeContext: false,
+      }),
     });
 
     expect(mocks.incrementAlertStreak).toHaveBeenCalledTimes(2);
@@ -359,7 +367,7 @@ describe('api/rag/ask handler integration', () => {
     expect(mocks.hybridSearch).not.toHaveBeenCalled();
     expect(mocks.classifyQuery).not.toHaveBeenCalled();
     expect(mocks.generateAnswer).not.toHaveBeenCalled();
-    expect(mocks.writeEvalEvent).not.toHaveBeenCalled();
+    expect(mocks.writeEvalEventBatch).not.toHaveBeenCalled();
   });
 
   it('streams SSE responses, persists session state, and writes eval events on completion', async () => {
@@ -392,7 +400,7 @@ describe('api/rag/ask handler integration', () => {
     expect(res.writes.some((chunk) => chunk.includes('"type":"delta","seq":2,"content":"world"'))).toBe(true);
     expect(res.writes.some((chunk) => chunk.includes('"type":"sources"'))).toBe(true);
     expect(res.writes.some((chunk) => chunk.includes('[DONE]'))).toBe(true);
-    expect(mocks.writeEvalEvent).toHaveBeenCalledTimes(3);
+    expect(mocks.writeEvalEventBatch).toHaveBeenCalledTimes(1);
   });
 
   it('runs rewrite fan-out searches and reranks merged results when rewrite mode is enabled', async () => {

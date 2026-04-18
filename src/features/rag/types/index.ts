@@ -1,4 +1,4 @@
-export type ChunkType = 'readme' | 'issue' | 'pr' | 'release' | 'commit';
+export type ChunkType = 'readme' | 'issue' | 'pr' | 'release' | 'commit' | 'code_summary';
 
 export interface Source {
   type: ChunkType;
@@ -13,6 +13,7 @@ export interface Source {
 export interface AskResponse {
   answer: string;
   sources: Source[];
+  requestId?: string;
 }
 
 export interface IngestResponse {

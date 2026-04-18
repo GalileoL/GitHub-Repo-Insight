@@ -41,27 +41,27 @@ Keep it up to date when architecture, APIs, or conventions change.
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
   - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, **code fetch stage**, streaming/non-streaming answer, eval event writes
-  - `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk (including **code_summary**), embed, upsert (REST fallback only when needed)
-  - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context); when a snapshot is missing it rebuilds retrieval and re-runs code-fetch enrichment for code queries
+- `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk (including **code_summary**), embed, upsert (REST fallback only when needed); successful responses now surface `codeSummaryCount` plus `codeSummaryFailed/codeSummaryFailureReason` when source indexing degrades
+- `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context); when a snapshot is missing it rebuilds retrieval, re-runs code-fetch enrichment for code queries, writes eval events, and updates code-fetch alert streaks
   - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis; share creation writes eval feedback
   - `api/rag/status.ts`: indexed/chunk count
-  - `api/rag/feedback.ts`: request-level feedback endpoint (share/retry/thumbs) — writes to `rag:eval:{requestId}` via `writeEvalFeedback`
+- `api/rag/feedback.ts`: request-level feedback endpoint (share/retry/thumbs) — validates `requestId` ownership against the stored retrieval login before writing `feedback:*`
 - Retrieval:
   - `lib/rag/retrieval/router.ts`: query classification (5 categories: documentation/community/changes/general/**code**); code queries get `typeFilter: ['code_summary']`
-  - `lib/rag/retrieval/hybrid.ts`: vector + keyword merge (RRF K=60, internally calls rerank); passes `queryCategory` to keyword path
+  - `lib/rag/retrieval/hybrid.ts`: vector + keyword merge (RRF K=60, internally calls rerank); passes `queryCategory` to both keyword and vector paths so non-code queries exclude `code_summary` on both legs
   - `lib/rag/retrieval/keyword.ts`: K1 isolation — non-code queries exclude `code_summary`; code queries include only `code_summary`
   - `lib/rag/retrieval/rerank.ts`: heuristic reranker (recency +0.15, content length +0.10, title match +0.05/term)
   - `lib/rag/retrieval/rewrite.ts`: conditional query rewrite (analysis, confidence, decision, candidates)
   - `lib/rag/retrieval/merge.ts`: multi-pass result merge, dedup, diagnostic snapshots
 - Chunking:
-  - `lib/rag/chunking/code-summary.ts`: TS/JS AST extractor (TypeScript Compiler API) + regex fallback for other languages; outputs `code_summary` chunks with `symbolNames`, `language`, `kindHints` metadata
+  - `lib/rag/chunking/code-summary.ts`: TS/JS AST extractor (TypeScript Compiler API) + regex fallback for other languages; outputs `code_summary` chunks with `symbolNames`, `language`, `lastIndexedSha`, and truncation metadata
   - `lib/rag/chunking/index.ts`: orchestrates all chunk types including new `code_summary`
 - Runtime enrichment:
   - `lib/rag/code-fetch.ts`: shared code-query source enrichment used by both `api/rag/ask.ts` and `api/rag/resume.ts`; exports `extractCodeWindow`, `codeFetchStage`, and code-fetch alert helpers
 - LLM:
   - `lib/rag/llm/index.ts`: provider config, prompt (real source code takes priority over summaries), stream/non-stream answer generation, `rewriteQueries()` for strong-llm mode
 - Storage:
-  - `lib/rag/storage/index.ts`: Upstash Vector ops; **K2 physical split** via `fetchCoreRepoChunks` (readme/issue/pr/release/commit prefix scans) and `fetchCodeSummaryChunks` (`{repo}:code:` prefix); Redis helpers for chunk counts, stream sessions, share entries, **eval events** (`writeEvalEvent`, `writeEvalFeedback`) and per-day eval secondary indexes (`rag:eval:index:{YYYY-MM-DD}`)
+  - `lib/rag/storage/index.ts`: Upstash Vector ops; **K2 physical split** via `fetchCoreRepoChunks` (readme/issue/pr/release/commit prefix scans) and `fetchCodeSummaryChunks` (`{repo}:code:` prefix); Redis helpers for chunk counts, stream sessions, share entries, **eval events** (`writeEvalEventBatch`, `writeEvalFeedback`, `getEvalFields`) and per-day eval secondary indexes (`rag:eval:index:{YYYY-MM-DD}`)
 - Ops / monitoring:
   - `lib/admin/alert-manager.ts`: Redis-backed streak / threshold alerts with suppress keys
   - `lib/admin/metrics-aggregator.ts`: indexed daily metrics hydration from eval hashes
@@ -359,7 +359,7 @@ Ingest now extracts code summaries from TS/JS source files (+ regex fallback for
 ### Ingest Changes
 - File tree fetched from GitHub Contents API; filtered to `src/**`, `lib/**`, `api/**`; capped at 200 files
 - Two-phase priority: (1) hard-protected entry points (`api/**/*.ts`, `lib/**/index.ts`, `src/App.tsx`), (2) remaining slots sorted by `changeFrequency×0.4 + prHitCount×0.3 + exportCount×0.2 + fileSizeInverse×0.1`
-- Code summary chunk ID format: `{repo}:code:{filePath}`
+- Code summary chunk ID format: `{repo}:code:{normalizedFilePath}` where `filePath` is NFC-normalized and `:` is escaped as `%3A`
 - `symbolNames` (capped), `symbolsTruncated`, `language`, `summaryTruncated` stored in metadata
 
 ### Ask Pipeline — Code Fetch Stage
@@ -377,15 +377,16 @@ rerank → codeFetchStage → generateAnswer
 - Failure degrades to summary-only; classified reason stored in eval event
 
 ### K1/K2 Retrieval Isolation
-- **K1 (logical):** `keywordSearch` receives `queryCategory`; non-code queries never load `code_summary`
+- **K1 (logical):** both `keywordSearch` and `vectorSearch` receive `queryCategory`; non-code queries exclude `code_summary`
 - **K2 (physical):** `fetchCoreRepoChunks` scans `{repo}:readme:`, `{repo}:issue:`, etc. separately; `fetchCodeSummaryChunks` scans `{repo}:code:` prefix — code_summary vectors never touch the wire for non-code queries
 
 ### Eval Events
-Each ask request writes a `rag:eval:{requestId}` Redis Hash (48h TTL) with fields:
+Each ask/resume request writes a `rag:eval:{requestId}` Redis Hash (48h TTL) with fields:
 - `retrieval`: category, topK, scores
 - `code_fetch` (code path only): selectedFiles, failedFiles (with classified reason), usedSummaryOnlyFallback
 - `answer`: model, answerUsedRetrievedCode
 - `feedback:*`: written via `/api/rag/feedback` or share creation as independent hash fields (`feedback:thumbsUp`, `feedback:userRetried`, etc.) so concurrent writes do not overwrite each other
+- Eval writes now index the requestId set first, then batch-write request fields to reduce half-written / unindexed hashes
 
 ### Phase 2 Future Work (Not Yet Implemented)
 - Multi-language high-precision AST (Python, Go, Rust, Java)

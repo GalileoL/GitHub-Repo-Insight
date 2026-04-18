@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   setStreamSessionSnapshot: vi.fn(),
   setStreamSessionProgress: vi.fn(),
   deleteStreamSession: vi.fn(),
+  writeEvalEventBatch: vi.fn(),
   classifyQuery: vi.fn(),
   hybridSearch: vi.fn(),
   generateAnswerStream: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   buildSources: vi.fn(),
   buildContextText: vi.fn(),
   codeFetchStage: vi.fn(),
+  updateCodeFetchAlerts: vi.fn(),
   ServerMetricsRecorder: class MockServerMetricsRecorder {
     requestId = 'req_resume_123';
     setChunkCount = vi.fn();
@@ -50,9 +52,11 @@ vi.mock('../../../../lib/rag/auth/index.js', () => ({
 vi.mock('../../../../lib/rag/storage/index.js', () => ({
   countRepoChunks: mocks.countRepoChunks,
   getStreamSession: mocks.getStreamSession,
+  normalizeRepo: (repo: string) => repo.toLowerCase(),
   setStreamSessionSnapshot: mocks.setStreamSessionSnapshot,
   setStreamSessionProgress: mocks.setStreamSessionProgress,
   deleteStreamSession: mocks.deleteStreamSession,
+  writeEvalEventBatch: mocks.writeEvalEventBatch,
 }));
 
 vi.mock('../../../../lib/rag/retrieval/router.js', () => ({
@@ -72,6 +76,7 @@ vi.mock('../../../../lib/rag/llm/index.js', () => ({
 
 vi.mock('../../../../lib/rag/code-fetch.js', () => ({
   codeFetchStage: mocks.codeFetchStage,
+  updateCodeFetchAlerts: mocks.updateCodeFetchAlerts,
 }));
 
 vi.mock('../../../../lib/rag/metrics/index.js', () => ({
@@ -209,6 +214,12 @@ describe('api/rag/resume handler integration', () => {
     expect(res.writes[0]).toContain('"resume":true');
     expect(res.writes.some((chunk) => chunk.includes('"type":"delta","seq":4,"content":"continued"'))).toBe(true);
     expect(mocks.deleteStreamSession).toHaveBeenCalledWith('req_123');
+    expect(mocks.writeEvalEventBatch).toHaveBeenCalledWith('req_123', {
+      answer: expect.objectContaining({
+        answerLength: 'partial continued'.length,
+        streamCancelled: false,
+      }),
+    });
   });
 
   it('re-runs retrieval when the session has no stored snapshot', async () => {
@@ -255,11 +266,26 @@ describe('api/rag/resume handler integration', () => {
     expect(mocks.generateAnswerStream).toHaveBeenCalledTimes(1);
     expect(mocks.generateAnswerStreamFromContext).not.toHaveBeenCalled();
     expect(mocks.codeFetchStage).toHaveBeenCalledTimes(1);
+    expect(mocks.updateCodeFetchAlerts).toHaveBeenCalledWith('owner/repo', expect.objectContaining({
+      fetchedFiles: ['src/retry.ts'],
+      failedFiles: [],
+    }));
     expect(mocks.generateAnswerStream.mock.calls[0][3]).toContain('[Live source code]');
     expect(mocks.setStreamSessionSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       requestId: 'req_123',
       contextText: 'rebuilt context',
       contextPrefix: expect.stringContaining('[Live source code]'),
+    }));
+    expect(mocks.writeEvalEventBatch).toHaveBeenCalledWith('req_123', expect.objectContaining({
+      retrieval: expect.objectContaining({ category: 'code', queryCategory: 'code' }),
+      code_fetch: expect.objectContaining({
+        fetchedFiles: ['src/retry.ts'],
+        summaryOnlyFallback: false,
+      }),
+      answer: expect.objectContaining({
+        usedRetrievedCode: true,
+        hasCodeContext: true,
+      }),
     }));
   });
 
@@ -273,6 +299,29 @@ describe('api/rag/resume handler integration', () => {
 
     expect(res.statusCode).toBe(404);
     expect(res.body).toEqual({ error: 'Stream session not found or expired' });
+  });
+
+  it('rejects stale resume checkpoints when the client is ahead of the stored progress', async () => {
+    mocks.getStreamSession.mockResolvedValue({
+      requestId: 'req_123',
+      login: 'alice',
+      repo: 'owner/repo',
+      question: 'Where is retryHandler defined?',
+      lastSeq: 2,
+      partialAnswer: 'partial ',
+      contextText: 'stored context',
+      contextPrefix: 'stored prefix',
+      sources: [{ type: 'issue', title: 'Source', url: 'https://github.com/owner/repo/issues/1' }],
+    });
+
+    const req = createMockReq({ requestId: 'req_123', lastSeq: 5 });
+    const res = createMockRes();
+
+    await handler(req as never, res as never);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: 'Resume checkpoint is stale. Please retry the question.' });
+    expect(mocks.generateAnswerStreamFromContext).not.toHaveBeenCalled();
   });
 
   it('allows snapshot-backed resume even when the GitHub token is temporarily unavailable', async () => {

@@ -311,6 +311,33 @@ describe('buildCodeSummaryChunk', () => {
     expect(chunk.metadata.symbolNames!.length).toBeLessThanOrEqual(64);
     expect(chunk.metadata.symbolsTruncated).toBe(true);
   });
+
+  it('normalizes and escapes file paths in chunk ids', () => {
+    const facts = extractTsFacts('src/cafe\u0301:worker.ts', 'export function run() {}');
+    const chunk = buildCodeSummaryChunk('owner/repo', facts);
+
+    expect(chunk.id).toBe('owner/repo:code:src/café%3Aworker.ts');
+    expect(chunk.metadata.filePath).toBe('src/cafe\u0301:worker.ts');
+  });
+
+  it('includes class method names in metadata symbolNames for code window lookup', () => {
+    const facts = extractTsFacts('src/router.ts', `
+export class Router {
+  classify(query: string): string { return query; }
+}
+`);
+    const chunk = buildCodeSummaryChunk('owner/repo', facts);
+
+    expect(chunk.metadata.symbolNames).toContain('Router');
+    expect(chunk.metadata.symbolNames).toContain('classify');
+  });
+
+  it('encodes githubUrl path segments safely', () => {
+    const facts = extractTsFacts('src/space #file.ts', 'export function run() {}');
+    const chunk = buildCodeSummaryChunk('owner/repo', facts, 'abc123');
+
+    expect(chunk.metadata.githubUrl).toBe('https://github.com/owner/repo/blob/abc123/src/space%20%23file.ts');
+  });
 });
 
 // ═══ chunkCodeSummaries ═════════════════════════════════════════

@@ -52,6 +52,7 @@ export interface Source {
 export interface AskResponse {
   answer: string;
   sources: Source[];
+  requestId?: string;
 }
 
 /** Response from the /api/rag/ingest endpoint */
@@ -59,6 +60,9 @@ export interface IngestResponse {
   status: 'ok' | 'error';
   chunksIndexed: number;
   message?: string;
+  codeSummaryCount?: number;
+  codeSummaryFailed?: boolean;
+  codeSummaryFailureReason?: string;
 }
 
 /** Response from the /api/rag/status endpoint */

@@ -3,7 +3,12 @@ import { fetchRepoData, fetchRepoSourceFiles } from '../../lib/rag/github/fetche
 import { chunkRepoData } from '../../lib/rag/chunking/index.js';
 import { embedTexts } from '../../lib/rag/embeddings/index.js';
 import { prewarmEmbeddings } from '../../lib/rag/llm/index.js';
-import { upsertChunks, deleteRepoChunks, setRepoChunkCount } from '../../lib/rag/storage/index.js';
+import {
+  upsertChunks,
+  deleteRepoChunks,
+  setRepoChunkCount,
+  normalizeRepo,
+} from '../../lib/rag/storage/index.js';
 import { authenticateRequest, checkIngestRateLimit } from '../../lib/rag/auth/index.js';
 import {
   incrementAlertStreak,
@@ -38,22 +43,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(429).json({ error: rateLimit.error });
   }
 
-  const { repo } = req.body ?? {};
+  const { repo: rawRepo } = req.body ?? {};
   // Use the authenticated user's token for GitHub data fetching
   const githubToken = auth.token;
 
-  if (!repo || typeof repo !== 'string') {
+  if (!rawRepo || typeof rawRepo !== 'string') {
     return res.status(400).json({ error: 'Missing repo in request body' });
   }
 
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(rawRepo)) {
     return res.status(400).json({ error: 'Invalid repo format. Use owner/name.' });
   }
+
+  const repo = normalizeRepo(rawRepo);
 
   try {
     // 1. Fetch raw data from GitHub (community data + source files in parallel)
     const rawData = await fetchRepoData(repo, githubToken);
-    const sourceResult = await fetchRepoSourceFiles(repo, githubToken, rawData).catch(() => null);
+    let sourceResult: Awaited<ReturnType<typeof fetchRepoSourceFiles>> | null = null;
+    let codeSummaryFailed = false;
+    let codeSummaryFailureReason: string | undefined;
+    try {
+      sourceResult = await fetchRepoSourceFiles(repo, githubToken, rawData);
+    } catch (sourceErr) {
+      codeSummaryFailed = true;
+      codeSummaryFailureReason = sourceErr instanceof Error ? sourceErr.message : 'unknown';
+      console.warn(JSON.stringify({
+        type: 'ingest_code_summary_fetch_failed',
+        repo,
+        reason: codeSummaryFailureReason,
+      }));
+    }
+
+    if (codeSummaryFailed) {
+      try {
+        await incrementAlertStreak('ingest_failure_streak', repo);
+        await checkAndFireStreakAlert('ingest_failure_streak', repo, 3, { repo });
+      } catch { /* best-effort */ }
+
+      return res.status(503).json({
+        status: 'error',
+        chunksIndexed: 0,
+        codeSummaryCount: 0,
+        codeSummaryFailed: true,
+        codeSummaryFailureReason,
+        error: 'Failed to fetch source files for code summary indexing',
+        message: 'Failed to fetch source files for code summary indexing',
+      });
+    }
 
     // Merge source files into raw data for unified chunking
     if (sourceResult) {
@@ -66,7 +103,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (chunks.length === 0) {
       await setRepoChunkCount(repo, 0);
-      return res.status(200).json({ status: 'ok', chunksIndexed: 0, message: 'No data to index' });
+      return res.status(200).json({
+        status: 'ok',
+        chunksIndexed: 0,
+        codeSummaryCount: 0,
+        codeSummaryFailed,
+        codeSummaryFailureReason,
+        message: 'No data to index',
+      });
     }
 
     // 3. Generate embeddings
@@ -90,6 +134,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       status: 'ok',
       chunksIndexed: chunks.length,
+      codeSummaryCount: chunks.filter((chunk) => chunk.metadata.type === 'code_summary').length,
+      codeSummaryFailed,
+      codeSummaryFailureReason,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

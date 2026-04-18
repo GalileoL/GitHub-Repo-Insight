@@ -43,7 +43,10 @@ describe('POST /api/rag/feedback', () => {
       login: 'alice',
       token: 'token',
     });
-    const writeEvalFeedback = vi.spyOn(storage, 'writeEvalFeedback').mockResolvedValue();
+    vi.spyOn(storage, 'getEvalFields').mockResolvedValue({
+      retrieval: JSON.stringify({ login: 'alice' }),
+    });
+    const writeEvalFeedback = vi.spyOn(storage, 'writeEvalFeedback').mockResolvedValue(true);
 
     const req: MockReq = {
       method: 'POST',
@@ -84,5 +87,104 @@ describe('POST /api/rag/feedback', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body).toEqual({ error: 'Missing requestId' });
+  });
+
+  it('rejects feedback for another user requestId', async () => {
+    vi.spyOn(auth, 'authenticateRequest').mockResolvedValue({
+      authenticated: true,
+      login: 'alice',
+      token: 'token',
+    });
+    vi.spyOn(storage, 'getEvalFields').mockResolvedValue({
+      retrieval: JSON.stringify({ login: 'bob' }),
+    });
+    const writeEvalFeedback = vi.spyOn(storage, 'writeEvalFeedback').mockResolvedValue(true);
+
+    const req: MockReq = {
+      method: 'POST',
+      body: {
+        requestId: 'req_123',
+        thumbsDown: true,
+      },
+    };
+    const res = createMockRes();
+
+    await feedbackHandler(req as never, res as never);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'Cannot write feedback for another user' });
+    expect(writeEvalFeedback).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 when evaluation storage cannot be read', async () => {
+    vi.spyOn(auth, 'authenticateRequest').mockResolvedValue({
+      authenticated: true,
+      login: 'alice',
+      token: 'token',
+    });
+    vi.spyOn(storage, 'getEvalFields').mockResolvedValue(null);
+
+    const req: MockReq = {
+      method: 'POST',
+      body: {
+        requestId: 'req_123',
+        thumbsUp: true,
+      },
+    };
+    const res = createMockRes();
+
+    await feedbackHandler(req as never, res as never);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({ error: 'Evaluation storage unavailable' });
+  });
+
+  it('rejects contradictory thumbs feedback payloads', async () => {
+    vi.spyOn(auth, 'authenticateRequest').mockResolvedValue({
+      authenticated: true,
+      login: 'alice',
+      token: 'token',
+    });
+
+    const req: MockReq = {
+      method: 'POST',
+      body: {
+        requestId: 'req_123',
+        thumbsUp: true,
+        thumbsDown: true,
+      },
+    };
+    const res = createMockRes();
+
+    await feedbackHandler(req as never, res as never);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'thumbsUp and thumbsDown cannot both be true' });
+  });
+
+  it('returns 503 when evaluation storage cannot be written', async () => {
+    vi.spyOn(auth, 'authenticateRequest').mockResolvedValue({
+      authenticated: true,
+      login: 'alice',
+      token: 'token',
+    });
+    vi.spyOn(storage, 'getEvalFields').mockResolvedValue({
+      retrieval: JSON.stringify({ login: 'alice' }),
+    });
+    vi.spyOn(storage, 'writeEvalFeedback').mockResolvedValue(false);
+
+    const req: MockReq = {
+      method: 'POST',
+      body: {
+        requestId: 'req_123',
+        thumbsUp: true,
+      },
+    };
+    const res = createMockRes();
+
+    await feedbackHandler(req as never, res as never);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({ error: 'Evaluation storage unavailable' });
   });
 });

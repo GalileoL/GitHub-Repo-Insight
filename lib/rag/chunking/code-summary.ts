@@ -336,8 +336,21 @@ export function renderCodeSummary(facts: ExtractedCodeFacts): string {
 
 /** Build symbol names list for metadata, with truncation */
 function buildSymbolNames(facts: ExtractedCodeFacts): { symbolNames: string[]; symbolsTruncated: boolean } {
+  const signatureSymbols = facts.symbolSignatures.flatMap((signature) => {
+    const names: string[] = [];
+    const classMatch = /^class\s+([A-Za-z_]\w*)/.exec(signature);
+    if (classMatch) {
+      names.push(classMatch[1]);
+    }
+    for (const match of signature.matchAll(/\b([A-Za-z_]\w*)\s*\(/g)) {
+      names.push(match[1]);
+    }
+    return names;
+  });
+
   const allSymbols = [
     ...facts.exports,
+    ...signatureSymbols,
     ...facts.internalHelpers,
   ];
 
@@ -353,6 +366,22 @@ function buildSymbolNames(facts: ExtractedCodeFacts): { symbolNames: string[]; s
     symbolNames: unique.slice(0, SYMBOL_NAMES_LIMIT),
     symbolsTruncated: true,
   };
+}
+
+// Chunk IDs treat filePath as case-sensitive (matches Linux/Git semantics).
+// Repos with case-insensitive FS collisions (e.g. Foo.ts vs foo.ts on macOS) are
+// out of scope; NFC + `:` escape is sufficient for the indexed repo set.
+function normalizeChunkPath(filePath: string): string {
+  return filePath.normalize('NFC').replaceAll(':', '%3A');
+}
+
+function buildGithubBlobUrl(repo: string, filePath: string, commitSha?: string): string {
+  const encodedPath = filePath
+    .normalize('NFC')
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/');
+  return `https://github.com/${repo}/blob/${commitSha ?? 'HEAD'}/${encodedPath}`;
 }
 
 /** Build a code summary chunk from extracted facts */
@@ -375,7 +404,7 @@ export function buildCodeSummaryChunk(
     repo,
     type: 'code_summary',
     title: `Code: ${facts.filePath}`,
-    githubUrl: `https://github.com/${repo}/blob/HEAD/${facts.filePath}`,
+    githubUrl: buildGithubBlobUrl(repo, facts.filePath, commitSha),
     filePath: facts.filePath,
     language: facts.language,
     symbolNames,
@@ -385,7 +414,7 @@ export function buildCodeSummaryChunk(
   };
 
   return {
-    id: `${repo}:code:${facts.filePath}`,
+    id: `${repo}:code:${normalizeChunkPath(facts.filePath)}`,
     content: summaryText,
     metadata,
   };
@@ -416,8 +445,13 @@ export function chunkCodeSummaries(
       if (facts.exports.length === 0 && facts.symbolSignatures.length === 0) continue;
 
       chunks.push(buildCodeSummaryChunk(repo, facts, commitSha));
-    } catch {
-      // Skip files that fail to parse — don't block ingest
+    } catch (err) {
+      console.warn(JSON.stringify({
+        type: 'code_summary_parse_failed',
+        repo,
+        filePath: file.path,
+        reason: err instanceof Error ? err.message : 'unknown',
+      }));
       continue;
     }
   }

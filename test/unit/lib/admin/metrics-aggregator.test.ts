@@ -162,6 +162,44 @@ describe('aggregateDailyMetrics', () => {
     expect(mockGetEvalIndex).toHaveBeenNthCalledWith(2, '2026-04-17');
   });
 
+  it('does not count requests whose retrieval started outside the UTC day window', async () => {
+    mockGetEvalIndex
+      .mockResolvedValueOnce([ 'req-straddle' ])
+      .mockResolvedValueOnce([]);
+    mockRedis.hgetall.mockResolvedValueOnce({
+      retrieval: JSON.stringify({ category: 'code', timestamp: DAY_START - 1000 }),
+      answer: JSON.stringify({ usedRetrievedCode: true, timestamp: DAY_START + 1000 }),
+    });
+
+    const metrics = await aggregateDailyMetrics(DATE);
+
+    expect(metrics.totalRequests).toBe(0);
+    expect(metrics.categoryDistribution).toEqual({});
+    expect(metrics.answerUsedRetrievedCodeRatio).toBe(0);
+  });
+
+  it('does not leak window-external code fetch metrics into the current day', async () => {
+    mockGetEvalIndex
+      .mockResolvedValueOnce(['req-straddle'])
+      .mockResolvedValueOnce([]);
+    mockRedis.hgetall.mockResolvedValueOnce({
+      retrieval: JSON.stringify({ category: 'code', timestamp: DAY_START + 1000 }),
+      code_fetch: JSON.stringify({
+        fetchedFiles: ['src/old.ts'],
+        failedFiles: [{ path: 'src/old.ts', reason: 'timeout' }],
+        timestamp: DAY_START - 1000,
+      }),
+      answer: JSON.stringify({ usedRetrievedCode: true, timestamp: DAY_START + 2000 }),
+    });
+
+    const metrics = await aggregateDailyMetrics(DATE);
+
+    expect(metrics.totalRequests).toBe(1);
+    expect(metrics.fetchSuccessRate).toBe(0);
+    expect(metrics.topSelectedFiles).toEqual([]);
+    expect(metrics.failureReasonDistribution).toEqual({});
+  });
+
   it('supports legacy writer aliases from ask.ts eval payloads', async () => {
     mockGetEvalIndex.mockResolvedValueOnce(['req-1']).mockResolvedValueOnce([]);
     mockRedis.hgetall.mockResolvedValueOnce({
@@ -180,5 +218,23 @@ describe('aggregateDailyMetrics', () => {
     expect(metrics.categoryDistribution).toEqual({ code: 1 });
     expect(metrics.summaryOnlyFallbackRate).toBe(1);
     expect(metrics.answerUsedRetrievedCodeRatio).toBe(1);
+  });
+
+  it('ignores hashes without an in-window retrieval event even if code_fetch exists', async () => {
+    mockGetEvalIndex.mockResolvedValueOnce(['req-1']).mockResolvedValueOnce([]);
+    mockRedis.hgetall.mockResolvedValueOnce({
+      code_fetch: JSON.stringify({
+        fetchedFiles: ['src/index.ts'],
+        failedFiles: [],
+        timestamp: DAY_START + 1000,
+      }),
+      answer: JSON.stringify({ hasCodeContext: true, timestamp: DAY_START + 1000 }),
+    });
+
+    const metrics = await aggregateDailyMetrics(DATE);
+
+    expect(metrics.totalRequests).toBe(0);
+    expect(metrics.codeFetchTriggerRate).toBe(0);
+    expect(metrics.fetchSuccessRate).toBe(0);
   });
 });

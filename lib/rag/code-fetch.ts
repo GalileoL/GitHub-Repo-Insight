@@ -82,7 +82,9 @@ export async function codeFetchStage(
           return null;
         }
         try {
-          const fetched = await fetchFileContentDetailed(repo, candidate.path, token);
+          const fetched = await fetchFileContentDetailed(repo, candidate.path, token, {
+            signal: controller.signal,
+          });
           if (!fetched.ok) {
             failedFiles.push({ path: candidate.path, reason: fetched.reason });
             return null;
@@ -125,8 +127,13 @@ export async function codeFetchStage(
 
 export async function updateCodeFetchAlerts(
   repo: string,
-  failedFiles: Array<{ path: string; reason: string }>,
+  result:
+    | Pick<CodeFetchResult, 'fetchedFiles' | 'failedFiles'>
+    | Array<{ path: string; reason: string }>,
 ): Promise<void> {
+  const fetchedFiles = Array.isArray(result) ? [] : result.fetchedFiles;
+  const failedFiles = Array.isArray(result) ? result : result.failedFiles;
+  const madeProgress = fetchedFiles.length > 0;
   const hasTimeoutFailure = failedFiles.some((f) => f.reason === 'timeout');
   const hasGeneralFailure = failedFiles.some((f) =>
     f.reason === 'not_found' ||
@@ -135,7 +142,7 @@ export async function updateCodeFetchAlerts(
     f.reason === 'unknown',
   );
 
-  if (hasTimeoutFailure) {
+  if (hasTimeoutFailure && !madeProgress) {
     try {
       await incrementAlertStreak('timeout_streak', repo);
       await checkAndFireStreakAlert('timeout_streak', repo, 5, { repo });
@@ -150,7 +157,7 @@ export async function updateCodeFetchAlerts(
     }
   }
 
-  if (hasGeneralFailure) {
+  if (hasGeneralFailure && !madeProgress) {
     try {
       await incrementAlertStreak('code_fetch_failure_streak', repo);
       await checkAndFireStreakAlert('code_fetch_failure_streak', repo, 5, { repo });

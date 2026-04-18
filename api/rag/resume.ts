@@ -11,16 +11,64 @@ import { authenticateRequest, checkRateLimit } from '../../lib/rag/auth/index.js
 import {
   countRepoChunks,
   getStreamSession,
+  normalizeRepo,
   setStreamSessionSnapshot,
   setStreamSessionProgress,
   deleteStreamSession,
+  writeEvalEventBatch,
 } from '../../lib/rag/storage/index.js';
 import {
   ServerMetricsRecorder,
   categorizeError,
   logStreamMetrics,
 } from '../../lib/rag/metrics/index.js';
-import { codeFetchStage } from '../../lib/rag/code-fetch.js';
+import {
+  codeFetchStage,
+  updateCodeFetchAlerts,
+} from '../../lib/rag/code-fetch.js';
+import type { CodeFetchResult } from '../../lib/rag/code-fetch.js';
+
+function buildResumeEvalEvents(args: {
+  repo: string;
+  login: string;
+  category: string;
+  chunkCount: number;
+  codeFetchResult: CodeFetchResult | null;
+  answerLength: number;
+  sourceCount: number;
+  hasCodeContext: boolean;
+  streamCancelled: boolean;
+}) {
+  return {
+    retrieval: {
+      repo: args.repo,
+      login: args.login,
+      category: args.category,
+      queryCategory: args.category,
+      firstPassCount: args.chunkCount,
+      finalCount: args.chunkCount,
+    },
+    code_fetch: args.codeFetchResult
+      ? {
+          repo: args.repo,
+          login: args.login,
+          fetchedFiles: args.codeFetchResult.fetchedFiles,
+          failedFiles: args.codeFetchResult.failedFiles,
+          summaryOnlyFallback: args.codeFetchResult.usedSummaryOnlyFallback,
+          usedSummaryOnlyFallback: args.codeFetchResult.usedSummaryOnlyFallback,
+        }
+      : undefined,
+    answer: {
+      repo: args.repo,
+      login: args.login,
+      answerLength: args.answerLength,
+      sourceCount: args.sourceCount,
+      usedRetrievedCode: args.hasCodeContext,
+      hasCodeContext: args.hasCodeContext,
+      streamCancelled: args.streamCancelled,
+    },
+  };
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -50,7 +98,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(403).json({ error: 'Cannot resume stream for a different user' });
   }
 
-  const repo = session.repo;
+  const repo = normalizeRepo(session.repo);
   const question = session.question;
   const hasSnapshot = typeof session.contextText === 'string' && Array.isArray(session.sources);
   const storedContextText = session.contextText ?? '';
@@ -75,6 +123,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let sources = storedSources;
     let contextText = storedContextText;
     let contextPrefix = storedContextPrefix;
+    let category: 'documentation' | 'community' | 'changes' | 'code' | 'general' = 'general';
+    let codeFetchResult: CodeFetchResult | null = null;
 
     if (!hasSnapshot) {
       // Fast-fail for repos that have not been indexed yet.
@@ -87,7 +137,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 1. Classify the query to determine type filter
-      const { typeFilter, category } = classifyQuery(question);
+      const classified = classifyQuery(question);
+      const { typeFilter } = classified;
+      category = classified.category;
 
       // 2. Hybrid retrieval
       chunks = await hybridSearch(question, repo, 8, typeFilter, category);
@@ -101,10 +153,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (category === 'code' && token) {
         try {
-          const codeFetchResult = await codeFetchStage(chunks, repo, token);
+          codeFetchResult = await codeFetchStage(chunks, repo, token);
           if (codeFetchResult.codeContext) {
             contextPrefix = codeFetchResult.codeContext;
           }
+          await updateCodeFetchAlerts(repo, codeFetchResult);
         } catch {
           // best-effort: resume still falls back to summaries
         }
@@ -126,6 +179,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('X-Request-ID', requestId);
 
     const checkpointSeq = Math.max(0, session.lastSeq ?? 0);
+    if (lastSeq > checkpointSeq) {
+      return res.status(409).json({ error: 'Resume checkpoint is stale. Please retry the question.' });
+    }
     const checkpointAnswer = session.partialAnswer ?? '';
 
     await setStreamSessionSnapshot({
@@ -237,6 +293,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const finalMetrics = metrics.end();
       logStreamMetrics(`[resume.ts stream] ${repo}`, finalMetrics);
+      void writeEvalEventBatch(requestId, hasSnapshot
+        ? {
+            answer: {
+              repo,
+              login: auth.login!,
+              answerLength: answerSoFar.length,
+              sourceCount: sources.length,
+              usedRetrievedCode: Boolean(contextPrefix),
+              hasCodeContext: Boolean(contextPrefix),
+              streamCancelled: aborted,
+            },
+          }
+        : buildResumeEvalEvents({
+            repo,
+            login: auth.login!,
+            category,
+            chunkCount: chunks.length,
+            codeFetchResult,
+            answerLength: answerSoFar.length,
+            sourceCount: sources.length,
+            hasCodeContext: Boolean(contextPrefix),
+            streamCancelled: aborted,
+          }));
       res.end();
     }
   } catch (err) {

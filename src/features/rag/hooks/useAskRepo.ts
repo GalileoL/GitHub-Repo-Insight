@@ -283,7 +283,7 @@ export function useAskRepo(repo: string) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const retryable = /failed to fetch|network|timeout|connection|abort/i.test(message);
-          const sessionGone = /session not found|not found or expired/i.test(message);
+          const sessionGone = /session not found|not found or expired|checkpoint is stale/i.test(message);
           if (sessionGone) {
             // Session expired or was never stored — fall back to a fresh ask
             requestIdRef.current = null;

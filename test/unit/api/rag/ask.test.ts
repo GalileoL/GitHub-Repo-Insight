@@ -94,7 +94,12 @@ describe('codeFetchStage', () => {
       makeCodeChunk('src/retry.ts', ['retryHandler']),
     ], 'owner/repo', 'token');
 
-    expect(fetchers.fetchFileContentDetailed).toHaveBeenCalledWith('owner/repo', 'src/retry.ts', 'token');
+    expect(fetchers.fetchFileContentDetailed).toHaveBeenCalledWith(
+      'owner/repo',
+      'src/retry.ts',
+      'token',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(result.fetchedFiles).toEqual(['src/retry.ts']);
     expect(result.usedSummaryOnlyFallback).toBe(false);
     expect(result.codeContext).toContain('Live source code');

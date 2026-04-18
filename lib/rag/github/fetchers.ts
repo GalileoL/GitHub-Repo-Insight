@@ -805,8 +805,11 @@ export async function fetchFileContentDetailed(
   repo: string,
   filePath: string,
   token?: string,
+  options?: { signal?: AbortSignal },
 ): Promise<FileFetchResult> {
   const controller = new AbortController();
+  const abortExternal = () => controller.abort();
+  options?.signal?.addEventListener('abort', abortExternal);
   const timer = setTimeout(() => controller.abort(), FETCH_FILE_TIMEOUT_MS);
 
   try {
@@ -831,6 +834,7 @@ export async function fetchFileContentDetailed(
     return { ok: false, reason: 'unknown' };
   } finally {
     clearTimeout(timer);
+    options?.signal?.removeEventListener('abort', abortExternal);
   }
 }
 

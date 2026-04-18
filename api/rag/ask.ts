@@ -10,10 +10,11 @@ import {
 import { authenticateRequest, checkRateLimit } from '../../lib/rag/auth/index.js';
 import {
   countRepoChunks,
+  normalizeRepo,
   setStreamSessionSnapshot,
   setStreamSessionProgress,
   deleteStreamSession,
-  writeEvalEvent,
+  writeEvalEventBatch,
 } from '../../lib/rag/storage/index.js';
 import {
   ServerMetricsRecorder,
@@ -32,6 +33,61 @@ import {
 } from '../../lib/rag/code-fetch.js';
 import type { CodeFetchResult } from '../../lib/rag/code-fetch.js';
 
+function buildEvalEvents(args: {
+  repo: string;
+  login: string;
+  category: string;
+  rewriteMode: string;
+  firstPassCount: number;
+  finalCount: number;
+  topScore: number;
+  avgScore: number;
+  coverageRatio: number;
+  totalRetrievalMs?: number;
+  codeFetchResult: CodeFetchResult | null;
+  answerLength: number;
+  sourceCount: number;
+  hasCodeContext: boolean;
+  streamCancelled: boolean;
+}) {
+  return {
+    retrieval: {
+      repo: args.repo,
+      login: args.login,
+      category: args.category,
+      queryCategory: args.category,
+      rewriteMode: args.rewriteMode,
+      firstPassCount: args.firstPassCount,
+      finalCount: args.finalCount,
+      topScore: args.topScore,
+      avgScore: args.avgScore,
+      coverageRatio: args.coverageRatio,
+      ...(typeof args.totalRetrievalMs === 'number'
+        ? { totalRetrievalMs: args.totalRetrievalMs }
+        : {}),
+    },
+    code_fetch: args.codeFetchResult
+      ? {
+          repo: args.repo,
+          login: args.login,
+          fetchedFiles: args.codeFetchResult.fetchedFiles,
+          failedFiles: args.codeFetchResult.failedFiles,
+          summaryOnlyFallback: args.codeFetchResult.usedSummaryOnlyFallback,
+          usedSummaryOnlyFallback: args.codeFetchResult.usedSummaryOnlyFallback,
+        }
+      : undefined,
+    answer: {
+      repo: args.repo,
+      login: args.login,
+      answerLength: args.answerLength,
+      sourceCount: args.sourceCount,
+      usedRetrievedCode: args.hasCodeContext,
+      hasCodeContext: args.hasCodeContext,
+      streamCancelled: args.streamCancelled,
+    },
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -49,9 +105,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const token = auth.token;
 
-  const { repo, question } = req.body ?? {};
+  const { repo: rawRepo, question } = req.body ?? {};
 
-  if (!repo || typeof repo !== 'string') {
+  if (!rawRepo || typeof rawRepo !== 'string') {
     return res.status(400).json({ error: 'Missing repo in request body' });
   }
 
@@ -59,9 +115,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing question in request body' });
   }
 
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(rawRepo)) {
     return res.status(400).json({ error: 'Invalid repo format. Use owner/name.' });
   }
+
+  const repo = normalizeRepo(rawRepo);
 
   if (question.length > 500) {
     return res.status(400).json({ error: 'Question too long (max 500 characters)' });
@@ -317,7 +375,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }));
         }
 
-        await updateCodeFetchAlerts(repo, codeFetchResult.failedFiles);
+        await updateCodeFetchAlerts(repo, codeFetchResult);
       } catch (codeFetchErr) {
         console.log(JSON.stringify({
           type: 'code_fetch_error',
@@ -448,32 +506,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const finalMetrics = metrics.end();
         logStreamMetrics(`[ask.ts stream] ${repo}`, finalMetrics);
 
-        // Best-effort eval writes (fire-and-forget)
-        void writeEvalEvent(requestId, 'retrieval', {
-          repo, login: auth.login, category, queryCategory: category,
+        void writeEvalEventBatch(requestId, buildEvalEvents({
+          repo,
+          login: auth.login!,
+          category,
           rewriteMode: rewriteResult.decision.mode,
-          firstPassCount: firstPass.length, finalCount: chunks.length,
-          topScore: firstPassConfidence.topScore, avgScore: firstPassConfidence.avgScore,
+          firstPassCount: firstPass.length,
+          finalCount: chunks.length,
+          topScore: firstPassConfidence.topScore,
+          avgScore: firstPassConfidence.avgScore,
           coverageRatio: firstPassConfidence.coverageRatio,
           totalRetrievalMs: diagnostics.timing.totalRetrievalMs,
-        });
-        if (codeFetchResult) {
-          void writeEvalEvent(requestId, 'code_fetch', {
-            repo, login: auth.login,
-            fetchedFiles: codeFetchResult.fetchedFiles,
-            failedFiles: codeFetchResult.failedFiles,
-            summaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
-            usedSummaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
-          });
-        }
-        void writeEvalEvent(requestId, 'answer', {
-          repo, login: auth.login,
+          codeFetchResult,
           answerLength: answerSoFar.length,
           sourceCount: sources.length,
-          usedRetrievedCode: codeContextPrefix.length > 0,
           hasCodeContext: codeContextPrefix.length > 0,
           streamCancelled: aborted,
-        });
+        }));
 
         res.end();
       }
@@ -481,33 +530,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // --- Non-streaming (backwards compatible) ---
       const result = await generateAnswer(question, repo, chunks, fullContextPrefix || undefined);
 
-      // Best-effort eval writes
       const evalRequestId = `non-stream-${generateRequestId()}`;
-      void writeEvalEvent(evalRequestId, 'retrieval', {
-        repo, login: auth.login, category, queryCategory: category,
+      void writeEvalEventBatch(evalRequestId, buildEvalEvents({
+        repo,
+        login: auth.login!,
+        category,
         rewriteMode: rewriteResult.decision.mode,
-        firstPassCount: firstPass.length, finalCount: chunks.length,
-        topScore: firstPassConfidence.topScore, avgScore: firstPassConfidence.avgScore,
-      });
-      if (codeFetchResult) {
-        void writeEvalEvent(evalRequestId, 'code_fetch', {
-          repo, login: auth.login,
-          fetchedFiles: codeFetchResult.fetchedFiles,
-          failedFiles: codeFetchResult.failedFiles,
-          summaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
-          usedSummaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
-        });
-      }
-      void writeEvalEvent(evalRequestId, 'answer', {
-        repo, login: auth.login,
+        firstPassCount: firstPass.length,
+        finalCount: chunks.length,
+        topScore: firstPassConfidence.topScore,
+        avgScore: firstPassConfidence.avgScore,
+        coverageRatio: firstPassConfidence.coverageRatio,
+        codeFetchResult,
         answerLength: result.answer.length,
         sourceCount: result.sources.length,
-        usedRetrievedCode: codeContextPrefix.length > 0,
         hasCodeContext: codeContextPrefix.length > 0,
         streamCancelled: false,
-      });
+      }));
 
-      return res.status(200).json(result);
+      return res.status(200).json({ ...result, requestId: evalRequestId });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

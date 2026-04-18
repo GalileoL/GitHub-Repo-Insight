@@ -32,7 +32,7 @@ function getChunkCountKey(repo: string): string {
   return `rag:chunk-count:${normalizeRepo(repo)}`;
 }
 
-function normalizeRepo(repo: string): string {
+export function normalizeRepo(repo: string): string {
   return repo.toLowerCase();
 }
 
@@ -64,6 +64,7 @@ export async function upsertChunks(
       vector: embeddings[i + j],
       metadata: {
         ...chunk.metadata,
+        repo: normalizeRepo(chunk.metadata.repo),
         content: chunk.content.slice(0, 2000), // store truncated content for retrieval
       },
     }));
@@ -161,15 +162,17 @@ export async function fetchCoreRepoChunks(
   repo: string,
   typeFilter?: string[],
 ): Promise<ScoredChunk[]> {
+  const normalizedRepo = normalizeRepo(repo);
   const pages = await Promise.all(
-    CORE_CHUNK_PREFIXES.map((p) => fetchChunksByPrefix(repo, `${repo}:${p}`, typeFilter)),
+    CORE_CHUNK_PREFIXES.map((p) => fetchChunksByPrefix(normalizedRepo, `${normalizedRepo}:${p}`, typeFilter)),
   );
   return pages.flat();
 }
 
 /** Fetch only code_summary chunks via the dedicated prefix. */
 export async function fetchCodeSummaryChunks(repo: string): Promise<ScoredChunk[]> {
-  return fetchChunksByPrefix(repo, `${repo}:${CODE_CHUNK_PREFIX}:`);
+  const normalizedRepo = normalizeRepo(repo);
+  return fetchChunksByPrefix(normalizedRepo, `${normalizedRepo}:${CODE_CHUNK_PREFIX}:`);
 }
 
 /**
@@ -447,12 +450,52 @@ export function getEvalIndexKey(date: string): string {
   return `rag:eval:index:${date}`;
 }
 
+type EvalHash = Record<string, string>;
+
+function withEvalTimestamp(data: Record<string, unknown>): string {
+  return JSON.stringify({ ...data, timestamp: Date.now() });
+}
+
+async function indexEvalRequest(
+  r: Redis,
+  requestId: string,
+  dateUtc: string,
+): Promise<string> {
+  const indexKey = getEvalIndexKey(dateUtc);
+  await r.sadd(indexKey, requestId);
+  await r.expire(indexKey, EVAL_INDEX_TTL_SECONDS);
+  return indexKey;
+}
+
 /** Return all requestIds recorded for a given UTC date (YYYY-MM-DD) */
 export async function getEvalIndex(date: string): Promise<string[]> {
   const r = getRedis();
   if (!r) return [];
   const members = await r.smembers(getEvalIndexKey(date));
   return (members ?? []).filter((m): m is string => typeof m === 'string');
+}
+
+export async function getEvalFields(
+  requestId: string,
+  fields?: string[],
+): Promise<EvalHash | null> {
+  const r = getRedis();
+  if (!r) return {};
+  try {
+    const hash = await r.hgetall<EvalHash>(getEvalKey(requestId));
+    if (!hash) return {};
+    if (!fields || fields.length === 0) return hash;
+
+    const filtered: EvalHash = {};
+    for (const field of fields) {
+      if (typeof hash[field] === 'string') {
+        filtered[field] = hash[field];
+      }
+    }
+    return filtered;
+  } catch {
+    return null;
+  }
 }
 
 /** Write a single evaluation event field to the Redis Hash for a request */
@@ -466,15 +509,50 @@ export async function writeEvalEvent(
   try {
     const key = getEvalKey(requestId);
     const dateUtc = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const indexKey = getEvalIndexKey(dateUtc);
-    await Promise.allSettled([
-      r.hset(key, { [eventType]: JSON.stringify({ ...data, timestamp: Date.now() }) }),
-      r.sadd(indexKey, requestId),
-    ]);
+    await indexEvalRequest(r, requestId, dateUtc);
+    await r.hset(key, { [eventType]: withEvalTimestamp(data) });
     await Promise.allSettled([
       r.expire(key, EVAL_TTL_SECONDS),
-      r.expire(indexKey, EVAL_INDEX_TTL_SECONDS),
     ]);
+  } catch {
+    // best-effort: silently ignore
+  }
+}
+
+/** Write multiple evaluation event fields in one Hash update for a request */
+export async function writeEvalEventBatch(
+  requestId: string,
+  events: Record<string, Record<string, unknown> | undefined>,
+): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    const entries = Object.entries(events).filter(
+      (entry): entry is [string, Record<string, unknown>] => entry[1] !== undefined,
+    );
+    if (entries.length === 0) return;
+
+    const dateUtc = new Date().toISOString().slice(0, 10);
+    const indexKey = await indexEvalRequest(r, requestId, dateUtc);
+
+    const payload = Object.fromEntries(
+      entries.map(([field, value]) => [field, withEvalTimestamp(value)]),
+    );
+
+    try {
+      await r.hset(getEvalKey(requestId), payload);
+    } catch {
+      await Promise.allSettled([
+        r.srem(indexKey, requestId),
+      ]);
+      return;
+    }
+
+    try {
+      await r.expire(getEvalKey(requestId), EVAL_TTL_SECONDS);
+    } catch {
+      // best-effort: retain the indexed hash even if TTL refresh fails
+    }
   } catch {
     // best-effort: silently ignore
   }
@@ -484,9 +562,9 @@ export async function writeEvalEvent(
 export async function writeEvalFeedback(
   requestId: string,
   feedback: Record<string, unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const r = getRedis();
-  if (!r) return;
+  if (!r) return false;
   try {
     const key = getEvalKey(requestId);
     const feedbackFields = Object.fromEntries(
@@ -500,7 +578,8 @@ export async function writeEvalFeedback(
       'feedback:timestamp': String(Date.now()),
     });
     await r.expire(key, EVAL_TTL_SECONDS);
+    return true;
   } catch {
-    // best-effort: silently ignore
+    return false;
   }
 }

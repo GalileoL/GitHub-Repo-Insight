@@ -799,6 +799,7 @@
 ## Phase 8 Follow-up Findings — Resolved
 
 > Additional focused code review completed after the Phase 8 fix commits and handler-integration-test commits. Resolved on 2026-04-18 with follow-up fixes and targeted handler tests.
+> Final independent reviewer pass completed on 2026-04-18 after commit `dea1d23`; no new blocking findings were raised.
 
 ### HIGH
 
@@ -831,11 +832,145 @@
 - [ ] Real `cron -> auth -> redis -> notifier` smoke coverage is still missing; current tests remain mock-driven.
 - [x] `resume` protocol tests now cover the “resume output should preserve ask-path code context quality” assertion after `F2`.
 
+### Final Review Status
+
+- [x] Independent follow-up code review completed after the final fix commit (`dea1d23`).
+- [x] No additional blocking or high-severity findings remained open after that review.
+- [ ] Real-environment validation is still pending:
+  - `cron -> auth -> redis -> notifier` smoke test
+  - optional push / PR / CI verification once Git remote tooling is available
+
+---
+
+## Phase 8 Second-Pass Review Findings — Resolved
+
+> Independent triple-reviewer pass completed 2026-04-18 (monitoring/storage + ask/resume/feedback + retrieval/chunking). All three reviewers returned REQUEST CHANGES. Items below are new findings not covered by the earlier Phase 8 review.
+> Re-audit 2026-04-18 (post `dea1d23`): S1–S7 confirmed fixed; S8/S9 were partial, residual gaps patched in this pass (case-sensitivity doc in `code-summary.ts:normalizeChunkPath`; per-file parse failures now log `code_summary_parse_failed` in `chunkCodeSummaries`).
+> Run `pnpm exec tsc -b && pnpm lint && pnpm test && pnpm build` after each fix group.
+
+### CRITICAL
+
+- (none)
+
+### HIGH (blocking)
+
+- [x] **S1 — Vector-leg K1/K2 isolation gap** (`lib/rag/retrieval/hybrid.ts`, `lib/rag/retrieval/vector.ts`, `lib/rag/retrieval/router.ts`)
+  - `keywordSearch` does category-aware physical isolation, but `vectorSearch` is called with only `typeFilter`. When non-code queries hit router branches that return `typeFilter === undefined` (e.g. "general"), vector search returns `code_summary` vectors; RRF fusion then leaks summaries into documentation/general answers.
+  - Fix: plumb `queryCategory` into `vectorSearch` and explicitly exclude `type=code_summary` for non-code categories (or make every non-code router branch return an explicit `typeFilter`).
+  - Why it matters: directly violates the "physical K2 isolation" promise in the plan.
+
+- [x] **S2 — `resume.ts` snapshot-miss bypasses eval writes and alert streaks** (`api/rag/resume.ts`)
+  - Snapshot-miss branch now calls `codeFetchStage` (F2) but does NOT: (a) write `retrieval` / `code_fetch` / `answer` eval events, (b) call `updateCodeFetchAlerts`. `ask.ts` does both.
+  - Fix: mirror `ask.ts:452-476` inside resume's `finally`; call `updateCodeFetchAlerts(repo, codeFetchResult.failedFiles)` after the code-fetch try. Persist `codeFetchResult` to a closure variable reachable from `finally`.
+  - Add handler test asserting eval writes + alert streak calls on resume snapshot-miss.
+
+- [x] **S3 — Feedback endpoint missing authz + live-requestId clear** (`api/rag/feedback.ts`)
+  - No check that `auth.login === storedEval.login` before `writeEvalFeedback`; any authenticated user can overwrite any requestId's feedback fields.
+  - Spec also requires "cache hit / showCached clears live requestId" — currently unimplemented.
+  - Fix: read stored `retrieval.login` from the eval hash, reject on mismatch; implement live-requestId clearing side effect.
+
+- [x] **S4 — Streak reset semantics inconsistent between ask.ts and ingest.ts**
+  - `code-fetch.ts` (code path) increments `timeout_streak` on any per-file timeout; `ingest.ts` only increments on full run failure. Partial-success code fetches will keep firing alerts on a healthy system.
+  - Fix: decide + document. Recommended: reset both streaks when `fetchedFiles.length > 0` (align with ingest's "any forward progress" semantics).
+
+- [x] **S5 — Half-written eval hashes** (`api/rag/ask.ts:452-508`)
+  - Three `void writeEvalEvent(...)` calls in `finally` have no ordering or atomicity; any partial Redis failure leaves a hash missing either `retrieval`, `code_fetch`, or `answer`. Consumers silently drop rows.
+  - Fix (option A): single `HSET` batch via new `writeEvalEventBatch(requestId, {retrieval, code_fetch, answer})`. (option B): write a `status:complete` sentinel field last; aggregator filters on it.
+
+- [x] **S6 — Cross-midnight requests get double-excluded** (`lib/admin/metrics-aggregator.ts:133-145`)
+  - Window filter uses `max(timestamps) ∈ [dayStart, dayEnd)`. A request whose `retrieval` lands day N-1 and `answer` lands day N+1 is in neither day's index fully: on day N its index membership exists but max is outside; on day N+1 the N-1 index is gone.
+  - Fix: filter by "any timestamp falls within window" instead of max; or pull N-2 when TTL ≥ 48h.
+
+- [x] **S7 — `writeEvalEvent` index-set desync** (`lib/rag/storage/index.ts:470-477`)
+  - `Promise.allSettled([hset, sadd])` means `hset` can succeed while `sadd` silently fails, making the request invisible to `getEvalIndex` forever.
+  - Fix: `await sadd` first (losing the index is worse than losing the hash), log warning on rejection so dropouts are observable.
+
+- [x] **S8 — Chunk ID collisions on case-insensitive FS / unicode paths** (`lib/rag/chunking/code-summary.ts:388`)
+  - `id: \`${repo}:code:${facts.filePath}\`` has no NFC normalization, no case-guard, no `:` escape. macOS/Windows devs vs Linux CI can produce duplicate/overlapping chunks silently.
+  - Fix: `.normalize('NFC')`, URI-encode `:`, document case-sensitivity assumption. Add regression test.
+
+- [x] **S9 — Ingest silently swallows code-summary failures** (`api/rag/ingest.ts:56,88,99`, `lib/rag/chunking/code-summary.ts:419`)
+  - `fetchRepoSourceFiles(...).catch(() => null)` + per-file bare `catch {}` can produce a fully successful response where 100% of code indexing failed. User has zero signal.
+  - Fix: return `{codeSummaryCount, codeSummaryFailed, reason}` in ingest response; log per-file failures with classification.
+
+### MEDIUM
+
+- [ ] **M1 — Alert streak TOCTOU race** (`lib/admin/alert-manager.ts:91-96`)
+  - `checkAndFireStreakAlert` re-`get`s the counter after `incrementAlertStreak`, then checks suppress key. Two concurrent failures can both pass the "no suppress key" check and both fire.
+  - Fix: pass post-INCR count as argument; use `SET NX EX` for suppress key so only one caller wins.
+
+- [ ] **M2 — Notifier webhook URL unvalidated, no fetch timeout** (`lib/admin/notifier.ts:16-26`)
+  - Misconfigured `OPS_WEBHOOK_URL` leaks alert body to arbitrary host; a hung webhook blocks the daily-report path.
+  - Fix: `AbortSignal.timeout(5000)`; optionally enforce `https:` scheme.
+
+- [ ] **M3 — Resend 2xx-with-error-body treated as success** (`lib/admin/notifier.ts:48`)
+  - `res.ok` true for Resend responses that carry an `error` payload; alert is silently swallowed.
+  - Fix: parse JSON, require presence of `id` field.
+
+- [ ] **M4 — Outer code-fetch AbortController is effectively dead** (`lib/rag/code-fetch.ts:74-115`)
+  - Outer 3s timer's `signal` never reaches the inner `fetch`; only per-file 2.5s cap actually bounds wall time.
+  - Fix: pass outer `controller.signal` into `fetchFileContentDetailed`, or drop the outer timer entirely since per-file timeout already bounds totals.
+
+- [ ] **M5 — Prompt injection via fetched source content** (`lib/rag/code-fetch.ts:107-122`)
+  - Source content is spliced into an authoritative block with `--- {path} ---` delimiters; attacker-controlled repo content can mimic delimiters or inject "Ignore previous instructions" lines.
+  - Fix: escape lines starting with `---` in the window; fence content with a nonce or base64 block. Document cross-user repo trust boundary.
+
+- [ ] **M6 — `fetchFileContentDetailed` ignores commit ref + rate-limit headers** (`lib/rag/github/fetchers.ts:804-835`)
+  - Contents API uses repo default branch; default-branch drift between index and fetch gives code that no longer matches the summary.
+  - 403 with `X-RateLimit-Remaining: 0` is classified as `forbidden`, masking `rate_limited`.
+  - Fix: thread `headSha` through `code_summary` metadata and pass `?ref=<sha>`; parse rate-limit headers and distinguish `rate_limited`.
+
+- [ ] **M7 — Router misclassifies code-intent queries as documentation** (`lib/rag/retrieval/router.ts:30-37`)
+  - "how is auth implemented", "what does getUser do" → documentation, never reach code branch.
+  - Fix: run code-lookup + camelCase/snake_case symbol heuristic before broad "how/what" doc bucket.
+
+- [ ] **M8 — `symbolNames` lacks total metadata size guard** (`lib/rag/chunking/code-summary.ts:7-8`)
+  - 64 × 80 chars + other fields can approach Upstash's metadata cap on large files. No total-size check.
+  - Fix: `JSON.stringify(metadata)` cap (e.g. 8KB) with progressive truncation of `symbolNames` first.
+
+- [ ] **M9 — Regex fallback trusts extension blindly** (`lib/rag/chunking/code-summary.ts:261-293`)
+  - `foo.py` with Kotlin content still reports `language: 'py'`. Rust rule only matches `pub`; Go rule misses receiver methods; Kotlin misses `private`/`internal`/`suspend fun`.
+  - Fix: shebang/first-line sniff or "looks plausible" guard; add modifier-agnostic variants.
+
+- [ ] **M10 — `failedFiles.push` from parallel callbacks yields non-deterministic order** (`lib/rag/code-fetch.ts:79-99`)
+  - Safe in single-threaded Node but ordering varies; tests will flake on anything asserting order.
+  - Fix: map to `{ok, reason}`, accumulate serially after `Promise.all`.
+
+- [ ] **M11 — `extractCodeWindow` picks first indexOf match** (`lib/rag/code-fetch.ts:22-44`)
+  - Short symbols like `get` collide with unrelated occurrences; wrong window for minified/generated files.
+  - Fix: word-boundary match (`\bsymbol\b`); prefer longest/most-specific symbol first.
+
+### LOW
+
+- [ ] **L1 — `getEvalIndex` has no cap** — cap at 10_000 with log warning to bound report-handler time.
+- [ ] **L2 — `safeCompare` length early-return leaks bit** (`api/admin/report.ts:31-34`) — pad to fixed length before `timingSafeEqual`.
+- [ ] **L3 — Swallowed exceptions need classified logs** — thread logger + `FileFetchFailureReason` through bare `catch` blocks in `code-summary.ts:419`, `ingest.ts:56/88/99`, `fetchers.ts:484/876`.
+- [ ] **L4 — `kindHints` `type-definition` rule too broad** (`code-summary.ts:227`) — single PascalCase class tags as type-definition; noisy but low impact.
+- [ ] **L5 — Resume test uses literal `\\n`** (`test/unit/api/rag/resume-handler.test.ts:175`) — cosmetic; does not actually verify newline-separated block in prompt.
+- [ ] **L6 — `getLeadingJSDoc` regex misses BOM/shebang files** (`code-summary.ts:108`) — prefix-tolerant regex or AST leading trivia.
+
+### Test Gaps (required before closing Phase 8 second pass)
+
+- [ ] Test: resume snapshot-miss for code category asserts eval writes + alert streak calls (covers S2).
+- [ ] Test: feedback endpoint rejects requests where `auth.login !== stored retrieval.login` (covers S3).
+- [ ] Test: aggregator correctly counts requests whose events straddle UTC midnight (covers S6).
+- [ ] Test: alert-manager concurrent increments + `SET NX` suppress → exactly one notification (covers M1).
+- [ ] Test: notifier webhook returns 500 then Resend succeeds — fallback chain verified for live_alert.
+- [ ] Test: metrics aggregator handles retrieval.timestamp day N-1 + answer.timestamp day N correctly.
+
+### Handoff Instructions for Next AI
+
+1. Read this section and verify none of the earlier Phase 8 / Phase 8 Follow-up items regressed.
+2. Suggested order: S1 (vector leak) → S9 (ingest silent failure) → S2 (resume observability) → S3 (feedback authz) → S5/S7 (eval atomicity / index desync) → S6 (metrics window) → S4 (streak semantics) → S8 (chunk id) → MEDIUM → LOW → tests.
+3. After each fix group: `pnpm exec tsc -b && pnpm lint && pnpm test && pnpm build`.
+4. Do NOT re-open any item listed as resolved in the earlier Phase 8 Review Findings or Phase 8 Follow-up sections — those fixes were independently re-verified in this pass.
+
 ---
 
 ## 9. Immediate Next Step
 
 后续如果继续推进，建议顺序是：
-1. 做真实 cron / webhook smoke test。
-2. 评估端到端测试是否要覆盖真实 provider / GitHub / Redis 依赖。
-3. 评估 Phase 2 范围：增量索引、多语言 AST、namespace 分离。
+1. 处理 §Phase 8 Second-Pass Review Findings 中的 HIGH 项（至少 S1 / S2 / S3 / S9）。
+2. 做真实 cron / webhook smoke test。
+3. 评估端到端测试是否要覆盖真实 provider / GitHub / Redis 依赖。
+4. 评估 Phase 2 范围：增量索引、多语言 AST、namespace 分离。

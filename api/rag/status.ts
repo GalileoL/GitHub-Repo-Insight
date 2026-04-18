@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { countRepoChunks } from '../../lib/rag/storage/index.js';
+import { countRepoChunks, normalizeRepo } from '../../lib/rag/storage/index.js';
 
 function parseIfNoneMatch(headerValue: string | undefined): Set<string> {
   if (!headerValue) return new Set();
@@ -16,15 +16,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const repo = req.query.repo;
-  if (!repo || typeof repo !== 'string') {
+  const rawRepo = req.query.repo;
+  if (!rawRepo || typeof rawRepo !== 'string') {
     return res.status(400).json({ error: 'Missing repo query parameter (e.g. ?repo=owner/name)' });
   }
 
   // Validate repo format
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(rawRepo)) {
     return res.status(400).json({ error: 'Invalid repo format. Use owner/name.' });
   }
+
+  const repo = normalizeRepo(rawRepo);
 
   try {
     const chunkCount = await countRepoChunks(repo);

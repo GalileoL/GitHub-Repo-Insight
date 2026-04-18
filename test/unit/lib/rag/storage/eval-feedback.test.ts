@@ -30,7 +30,7 @@ describe('writeEvalFeedback', () => {
   });
 
   it('writes feedback as independent hash fields so signals do not overwrite each other', async () => {
-    await writeEvalFeedback('req_123', { shareCreated: true, shareId: 'share_1' });
+    await expect(writeEvalFeedback('req_123', { shareCreated: true, shareId: 'share_1' })).resolves.toBe(true);
 
     expect(mockRedis.hget).not.toHaveBeenCalled();
     expect(mockRedis.hset).toHaveBeenCalledTimes(1);
@@ -53,5 +53,11 @@ describe('writeEvalFeedback', () => {
     expect(mockRedis.hset).toHaveBeenCalledTimes(2);
     expect(mockRedis.hset.mock.calls[0][1]).toMatchObject({ 'feedback:thumbsUp': 'true' });
     expect(mockRedis.hset.mock.calls[1][1]).toMatchObject({ 'feedback:shareCreated': 'true' });
+  });
+
+  it('returns false when feedback storage fails', async () => {
+    mockRedis.hset.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(writeEvalFeedback('req_123', { thumbsUp: true })).resolves.toBe(false);
   });
 });

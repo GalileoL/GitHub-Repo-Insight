@@ -14,10 +14,12 @@ export async function hybridSearch(
   typeFilter?: ChunkType[],
   queryCategory?: QueryCategory,
 ): Promise<ScoredChunk[]> {
+  const backendTopK = Math.max(20, topK * 2);
+
   // Run both searches in parallel
   const [vectorResults, keywordResults] = await Promise.all([
-    vectorSearch(query, repo, 20, typeFilter),
-    keywordSearch(query, repo, 20, typeFilter, queryCategory),
+    vectorSearch(query, repo, backendTopK, typeFilter, queryCategory),
+    keywordSearch(query, repo, backendTopK, typeFilter, queryCategory),
   ]);
 
   // Reciprocal Rank Fusion
