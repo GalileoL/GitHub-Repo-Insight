@@ -85,11 +85,11 @@ export async function codeFetchStage(
           const fetched = await fetchFileContentDetailed(repo, candidate.path, token, {
             signal: controller.signal,
           });
-          if (!fetched.ok) {
-            failedFiles.push({ path: candidate.path, reason: fetched.reason });
-            return null;
+          if (fetched.ok) {
+            return { ...candidate, content: fetched.content };
           }
-          return { ...candidate, content: fetched.content };
+          failedFiles.push({ path: candidate.path, reason: fetched.reason });
+          return null;
         } catch (fetchErr) {
           const reason = fetchErr instanceof Error && fetchErr.name === 'AbortError'
             ? 'timeout'

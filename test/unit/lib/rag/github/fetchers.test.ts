@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  fetchFileContentDetailed,
   fetchRepoData,
   prioritizeFetchedSourceFiles,
   prioritizeSourceFilePaths,
@@ -168,6 +169,32 @@ describe('fetchRepoData', () => {
     await expect(fetchRepoData('owner/repo/extra', 'token-123')).rejects.toThrow(
       'Invalid repo format: owner/repo/extra',
     );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchFileContentDetailed', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('treats a pre-aborted external signal as a timeout without issuing a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      fetchFileContentDetailed('owner/repo', 'src/app.ts', 'token-123', { signal: controller.signal }),
+    ).resolves.toEqual({ ok: false, reason: 'timeout' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
