@@ -5,7 +5,7 @@ import * as auth from '../../../../lib/rag/auth/index.js';
 
 import shareHandler from '../../../../api/rag/share/[id].js';
 import statusHandler from '../../../../api/rag/status.js';
-import sessionHandler from '../../../../api/auth/session.js';
+import authHandler from '../../../../api/auth/[action].js';
 
 type MockReq = {
   method?: string;
@@ -163,7 +163,9 @@ describe('rag cache headers and conditional responses', () => {
     };
     const res = createMockRes();
 
-    await sessionHandler(req as never, res as never);
+    req.query = { action: 'session' };
+
+    await authHandler(req as never, res as never);
 
     expect(res.statusCode).toBe(200);
     expect(res.getHeader('Cache-Control')).toBe('private, no-store');
@@ -178,10 +180,26 @@ describe('rag cache headers and conditional responses', () => {
     };
     const res = createMockRes();
 
-    await sessionHandler(req as never, res as never);
+    req.query = { action: 'session' };
+
+    await authHandler(req as never, res as never);
 
     expect(res.statusCode).toBe(405);
     expect(res.getHeader('Cache-Control')).toBe('private, no-store');
     expect(res.body).toEqual({ error: 'Method not allowed' });
+  });
+
+  it('returns 404 for unknown auth action', async () => {
+    const req: MockReq = {
+      method: 'GET',
+      query: { action: 'unknown' },
+      headers: {},
+    };
+    const res = createMockRes();
+
+    await authHandler(req as never, res as never);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toEqual({ error: 'Not found' });
   });
 });

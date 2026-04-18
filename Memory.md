@@ -13,7 +13,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 
 ## 2) Top-Level Structure
 - `src/`: frontend app (pages, components, hooks, stores, utils)
-- `api/`: Vercel serverless endpoints (`auth`, `rag/ask`, `rag/ingest`, `rag/resume`, `rag/share`, `rag/status`, `rag/feedback`)
+- `api/`: Vercel serverless endpoints (`auth/[action]`, `rag/ask`, `rag/ingest`, `rag/resume`, `rag/share`, `rag/status`, `rag/feedback`)
 - `lib/rag/`: shared backend logic (auth, retrieval, llm, storage, chunking, github fetchers)
 - `docs/plans/`: architecture and hardening notes
 - `README.md`: user-facing docs
@@ -29,7 +29,7 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Chart components render language, commits, contributors, issues/PR trends, releases
 - Ask Repo flow:
   - `AskRepoPanel` checks index status (`/api/rag/status`)
-  - User signs in via `/api/auth/start` (server-generated state + PKCE), callback exchanges code at `/api/auth/github`
+  - User signs in via `/api/auth/start` (served by `api/auth/[action].ts`, server-generated state + PKCE), callback exchanges code at `/api/auth/github`
   - Auth session is stored in signed HttpOnly cookie (`gh_app_session`)
   - User triggers index (`/api/rag/ingest`) if needed
   - User asks question (`/api/rag/ask`, optional streaming)
@@ -40,6 +40,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
+  - `api/auth/[action].ts`: consolidated auth endpoint for `start|github|session|logout`; kept to one function because Vercel Hobby deployments fail above 12 serverless functions
   - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, **code fetch stage**, streaming/non-streaming answer, eval event writes
 - `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk (including **code_summary**), embed, upsert (REST fallback only when needed); successful responses now surface `codeSummaryCount` plus `codeSummaryFailed/codeSummaryFailureReason` when source indexing degrades
 - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context); when a snapshot is missing it rebuilds retrieval, re-runs code-fetch enrichment for code queries, writes eval events, and updates code-fetch alert streaks
