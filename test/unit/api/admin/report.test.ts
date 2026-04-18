@@ -75,6 +75,7 @@ describe('api/admin/report', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -166,7 +167,10 @@ describe('api/admin/report', () => {
     expect(mockSendOpsNotification).toHaveBeenCalledOnce();
   });
 
-  it('returns 200 using today date when no date query param provided', async () => {
+  it('returns 200 using the previous UTC day when no date query param is provided', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-18T01:00:00.000Z'));
+
     const req: MockReq = {
       method: 'GET',
       headers: { authorization: 'Bearer supersecret' },
@@ -178,7 +182,7 @@ describe('api/admin/report', () => {
 
     expect(res.statusCode).toBe(200);
     const calledDate = mockAggregateDailyMetrics.mock.calls[0][0] as string;
-    expect(calledDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(calledDate).toBe('2026-04-17');
   });
 
   it('returns 500 and calls notifier when aggregation throws', async () => {

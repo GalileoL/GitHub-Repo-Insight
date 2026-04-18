@@ -42,7 +42,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 - API endpoints:
   - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, **code fetch stage**, streaming/non-streaming answer, eval event writes
   - `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk (including **code_summary**), embed, upsert (REST fallback only when needed)
-  - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context)
+  - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context); when a snapshot is missing it rebuilds retrieval and re-runs code-fetch enrichment for code queries
   - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis; share creation writes eval feedback
   - `api/rag/status.ts`: indexed/chunk count
   - `api/rag/feedback.ts`: request-level feedback endpoint (share/retry/thumbs) — writes to `rag:eval:{requestId}` via `writeEvalFeedback`
@@ -56,6 +56,8 @@ Keep it up to date when architecture, APIs, or conventions change.
 - Chunking:
   - `lib/rag/chunking/code-summary.ts`: TS/JS AST extractor (TypeScript Compiler API) + regex fallback for other languages; outputs `code_summary` chunks with `symbolNames`, `language`, `kindHints` metadata
   - `lib/rag/chunking/index.ts`: orchestrates all chunk types including new `code_summary`
+- Runtime enrichment:
+  - `lib/rag/code-fetch.ts`: shared code-query source enrichment used by both `api/rag/ask.ts` and `api/rag/resume.ts`; exports `extractCodeWindow`, `codeFetchStage`, and code-fetch alert helpers
 - LLM:
   - `lib/rag/llm/index.ts`: provider config, prompt (real source code takes priority over summaries), stream/non-stream answer generation, `rewriteQueries()` for strong-llm mode
 - Storage:
@@ -65,7 +67,7 @@ Keep it up to date when architecture, APIs, or conventions change.
   - `lib/admin/metrics-aggregator.ts`: indexed daily metrics hydration from eval hashes
   - `lib/admin/report-renderer.ts`: markdown daily report formatter
   - `lib/admin/notifier.ts`: scenario-aware notification routing (`Webhook -> Resend -> structured log` for live alerts, `Resend -> structured log` for daily report)
-  - `api/admin/report.ts`: CRON-protected daily report endpoint
+  - `api/admin/report.ts`: CRON-protected daily report endpoint; when `date` is omitted it reports the previous UTC day by default
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: session-cookie auth, GitHub token verify/refresh, daily ask/ingest limits in Redis
 - GitHub API client:

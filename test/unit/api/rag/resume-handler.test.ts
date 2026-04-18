@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   generateAnswerStreamFromContext: vi.fn(),
   buildSources: vi.fn(),
   buildContextText: vi.fn(),
+  codeFetchStage: vi.fn(),
   ServerMetricsRecorder: class MockServerMetricsRecorder {
     requestId = 'req_resume_123';
     setChunkCount = vi.fn();
@@ -67,6 +68,10 @@ vi.mock('../../../../lib/rag/llm/index.js', () => ({
   generateAnswerStreamFromContext: mocks.generateAnswerStreamFromContext,
   buildSources: mocks.buildSources,
   buildContextText: mocks.buildContextText,
+}));
+
+vi.mock('../../../../lib/rag/code-fetch.js', () => ({
+  codeFetchStage: mocks.codeFetchStage,
 }));
 
 vi.mock('../../../../lib/rag/metrics/index.js', () => ({
@@ -166,6 +171,12 @@ describe('api/rag/resume handler integration', () => {
     mocks.buildContextText.mockReturnValue('rebuilt context');
     mocks.generateAnswerStream.mockReturnValue(createAsyncGenerator(['continued']));
     mocks.generateAnswerStreamFromContext.mockReturnValue(createAsyncGenerator(['continued']));
+    mocks.codeFetchStage.mockResolvedValue({
+      codeContext: '[Live source code]\\n\\n--- src/retry.ts ---\\nexport function retryHandler() {}',
+      fetchedFiles: ['src/retry.ts'],
+      failedFiles: [],
+      usedSummaryOnlyFallback: false,
+    });
   });
 
   it('resumes from stored snapshot context without re-running retrieval', async () => {
@@ -243,9 +254,12 @@ describe('api/rag/resume handler integration', () => {
     );
     expect(mocks.generateAnswerStream).toHaveBeenCalledTimes(1);
     expect(mocks.generateAnswerStreamFromContext).not.toHaveBeenCalled();
+    expect(mocks.codeFetchStage).toHaveBeenCalledTimes(1);
+    expect(mocks.generateAnswerStream.mock.calls[0][3]).toContain('[Live source code]');
     expect(mocks.setStreamSessionSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       requestId: 'req_123',
       contextText: 'rebuilt context',
+      contextPrefix: expect.stringContaining('[Live source code]'),
     }));
   });
 
@@ -259,5 +273,33 @@ describe('api/rag/resume handler integration', () => {
 
     expect(res.statusCode).toBe(404);
     expect(res.body).toEqual({ error: 'Stream session not found or expired' });
+  });
+
+  it('allows snapshot-backed resume even when the GitHub token is temporarily unavailable', async () => {
+    mocks.authenticateRequest.mockResolvedValue({
+      authenticated: true,
+      login: 'alice',
+      token: null,
+    });
+    mocks.getStreamSession.mockResolvedValue({
+      requestId: 'req_123',
+      login: 'alice',
+      repo: 'owner/repo',
+      question: 'Where is retryHandler defined?',
+      lastSeq: 2,
+      partialAnswer: 'partial ',
+      contextText: 'stored context',
+      contextPrefix: 'stored prefix',
+      sources: [{ type: 'issue', title: 'Source', url: 'https://github.com/owner/repo/issues/1' }],
+    });
+
+    const req = createMockReq({ requestId: 'req_123', lastSeq: 2 });
+    const res = createMockRes();
+
+    await handler(req as never, res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(mocks.generateAnswerStreamFromContext).toHaveBeenCalledTimes(1);
+    expect(mocks.codeFetchStage).not.toHaveBeenCalled();
   });
 });

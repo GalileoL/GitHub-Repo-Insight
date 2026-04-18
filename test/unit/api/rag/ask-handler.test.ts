@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => ({
       };
     }
   },
+  generateRequestId: vi.fn(() => 'req_nonstream_123'),
   categorizeError: vi.fn(),
   logStreamMetrics: vi.fn(),
 }));
@@ -114,6 +115,7 @@ vi.mock('../../../../lib/admin/alert-manager.js', () => ({
 
 vi.mock('../../../../lib/rag/metrics/index.js', () => ({
   ServerMetricsRecorder: mocks.ServerMetricsRecorder,
+  generateRequestId: mocks.generateRequestId,
   categorizeError: mocks.categorizeError,
   logStreamMetrics: mocks.logStreamMetrics,
 }));
@@ -277,6 +279,7 @@ describe('api/rag/ask handler integration', () => {
     expect(mocks.generateAnswer.mock.calls[0][3]).toContain('retryHandler');
 
     expect(mocks.writeEvalEvent).toHaveBeenCalledTimes(3);
+    expect(mocks.writeEvalEvent.mock.calls[0][0]).toBe('non-stream-req_nonstream_123');
     expect(mocks.writeEvalEvent.mock.calls[0][1]).toBe('retrieval');
     expect(mocks.writeEvalEvent.mock.calls[0][2]).toMatchObject({ category: 'code', queryCategory: 'code' });
     expect(mocks.writeEvalEvent.mock.calls[1][1]).toBe('code_fetch');

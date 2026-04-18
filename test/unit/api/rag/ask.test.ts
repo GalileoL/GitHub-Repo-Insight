@@ -17,7 +17,7 @@ vi.mock('../../../../lib/admin/alert-manager.js', () => ({
   checkAndFireStreakAlert: mockCheckAndFireStreakAlert,
 }));
 
-import { codeFetchStage, extractCodeWindow, updateCodeFetchAlerts } from '../../../../api/rag/ask.js';
+import { codeFetchStage, extractCodeWindow, updateCodeFetchAlerts } from '../../../../lib/rag/code-fetch.js';
 import * as fetchers from '../../../../lib/rag/github/fetchers.js';
 
 function makeCodeChunk(path: string, symbolNames: string[] = [], score = 1): ScoredChunk {

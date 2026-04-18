@@ -20,6 +20,7 @@ import {
   categorizeError,
   logStreamMetrics,
 } from '../../lib/rag/metrics/index.js';
+import { codeFetchStage } from '../../lib/rag/code-fetch.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -55,6 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const storedContextText = session.contextText ?? '';
   const storedContextPrefix = session.contextPrefix;
   const storedSources = session.sources ?? [];
+  const token = auth.token ?? null;
 
   try {
     // --- Rate limit ---
@@ -72,6 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let chunks = [] as Awaited<ReturnType<typeof hybridSearch>>;
     let sources = storedSources;
     let contextText = storedContextText;
+    let contextPrefix = storedContextPrefix;
 
     if (!hasSnapshot) {
       // Fast-fail for repos that have not been indexed yet.
@@ -94,6 +97,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           answer: 'This repository has not been indexed yet. Please index it first before asking questions.',
           sources: [],
         });
+      }
+
+      if (category === 'code' && token) {
+        try {
+          const codeFetchResult = await codeFetchStage(chunks, repo, token);
+          if (codeFetchResult.codeContext) {
+            contextPrefix = codeFetchResult.codeContext;
+          }
+        } catch {
+          // best-effort: resume still falls back to summaries
+        }
       }
 
       sources = buildSources(chunks);
@@ -121,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       question,
       createdAt: Date.now(),
       contextText,
-      contextPrefix: storedContextPrefix,
+      contextPrefix,
       sources,
     });
     await setStreamSessionProgress(requestId, {
@@ -151,10 +165,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             question,
             repo,
             contextText,
-            storedContextPrefix,
+            contextPrefix,
             checkpointAnswer,
           )
-        : generateAnswerStream(question, repo, chunks, storedContextPrefix, checkpointAnswer);
+        : generateAnswerStream(question, repo, chunks, contextPrefix, checkpointAnswer);
 
       const startHeartbeat = () => {
         heartbeatTimer = setInterval(() => {

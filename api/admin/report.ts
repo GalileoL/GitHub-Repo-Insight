@@ -11,6 +11,12 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(ba, bb);
 }
 
+function previousUtcDateString(now: Date): string {
+  const d = new Date(now);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -31,7 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const dateParam =
     typeof req.query['date'] === 'string' ? req.query['date'] : null;
-  const dateUtc = dateParam ?? new Date().toISOString().slice(0, 10);
+  const dateUtc = dateParam ?? previousUtcDateString(new Date());
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateUtc)) {
     return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD.' });

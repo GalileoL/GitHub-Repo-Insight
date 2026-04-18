@@ -796,6 +796,43 @@
 
 ---
 
+## Phase 8 Follow-up Findings — Resolved
+
+> Additional focused code review completed after the Phase 8 fix commits and handler-integration-test commits. Resolved on 2026-04-18 with follow-up fixes and targeted handler tests.
+
+### HIGH
+
+- [x] **F1 — Daily report default date should target the previous UTC day** (`api/admin/report.ts`, `vercel.json`)
+  - Current behavior: when `/api/admin/report` is called without `?date=`, it defaults to `new Date().toISOString().slice(0, 10)`.
+  - Problem: the cron runs at `01:00 UTC`, so the automatic daily report currently sends a partial “today so far” report rather than the fully completed previous UTC day.
+  - Expected fix:
+    - Default cron-driven report date to the previous UTC calendar date.
+    - Keep explicit `?date=YYYY-MM-DD` overrides unchanged for manual backfills / smoke tests.
+    - Add a test covering the no-date cron default semantics.
+
+- [x] **F2 — `resume.ts` snapshot-miss rebuild path must restore code-fetch semantics for code queries** (`api/rag/resume.ts`, compare `api/rag/ask.ts`)
+  - Current behavior: when a resume session exists but has no stored snapshot, `resume.ts` re-runs `classifyQuery -> hybridSearch -> buildContextText`, then streams directly from chunk summaries.
+  - Problem: `ask.ts` runs `codeFetchStage()` for code queries and injects live source code into `contextPrefix`, but the snapshot-miss resume path does not. This makes restored code-query answers weaker than the original ask path.
+  - Expected fix:
+    - For rebuilt code-query resume paths, run the same code-fetch enrichment used by `ask.ts`, or refactor both handlers to share the same enrichment function.
+    - Add a handler-level test proving that snapshot-miss resume for a code query restores live source code context, not just summary chunks.
+
+### MEDIUM
+
+- [x] **F3 — non-stream eval request IDs need collision-safe generation** (`api/rag/ask.ts`)
+  - Current behavior: non-stream eval writes use `const evalRequestId = \`non-stream-\${Date.now()}\``.
+  - Problem: concurrent requests within the same millisecond can collide and write into the same `rag:eval:*` hash, corrupting monitoring data.
+  - Expected fix:
+    - Replace timestamp-only IDs with the same request-id generator semantics used by streaming metrics, or another sufficiently collision-safe ID format.
+    - Add a targeted test or helper-level assertion for uniqueness strategy / non-overwrite behavior.
+
+### Residual Test Gap
+
+- [ ] Real `cron -> auth -> redis -> notifier` smoke coverage is still missing; current tests remain mock-driven.
+- [x] `resume` protocol tests now cover the “resume output should preserve ask-path code context quality” assertion after `F2`.
+
+---
+
 ## 9. Immediate Next Step
 
 后续如果继续推进，建议顺序是：
