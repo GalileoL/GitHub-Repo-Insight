@@ -20,6 +20,7 @@
     "@tanstack/react-virtual": "^3.13.21",
     "@upstash/redis": "^1.36.4",
     "@upstash/vector": "^1.2.3",
+    "@vercel/analytics": "^2.0.1",
     "dayjs": "^1.11.19",
     "diff": "^8.0.3",
     "echarts": "^6.0.0",
