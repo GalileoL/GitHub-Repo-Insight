@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import { router } from './router';
 
 const queryClient = new QueryClient({
@@ -16,6 +17,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      <Analytics />
     </QueryClientProvider>
   );
 }
