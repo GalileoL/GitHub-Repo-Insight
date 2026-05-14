@@ -30,8 +30,10 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 - **Ask Repo (AI)** — Ask natural-language questions about any indexed repository, powered by RAG
 - **SSE Streaming** — LLM answers stream token-by-token with a live typing cursor
 - **Multi-LLM Support** — Switch between OpenAI, DeepSeek, Groq, Gemini, and Claude via a single env var
-- **On-Demand Indexing** — One-click ingestion of README, issues, PRs, releases, and commits into a vector database
-- **Hybrid Retrieval** — Combines vector similarity + keyword search with query routing and reranking
+- **On-Demand Indexing** — One-click ingestion of README, issues, PRs, releases, commits, and **TypeScript/JavaScript source files** into a vector database
+- **Source Code Indexing** — Extracts exported symbols, signatures, imports, and JSDoc from TS/JS source files using the TypeScript Compiler API; stores as searchable `code_summary` chunks
+- **Code-Aware Q&A** — Code-related questions trigger on-demand GitHub source fetches (up to 3 files, with symbol-window extraction) for precise implementation answers
+- **Hybrid Retrieval** — Combines vector similarity + keyword search with query routing and reranking; code queries are physically isolated from prose chunks
 - **Conditional Query Rewrite** — Automatically analyzes query risk and retrieval confidence to trigger synonym expansion, query decomposition, or LLM-based reformulation for improved retrieval on vague/complex questions
 - **Shareable Answers** — Save a generated answer and its citations to a short-lived share link
 - **Cited Answers** — AI answers include clickable source citations linking back to GitHub
@@ -64,14 +66,14 @@ Below are sample screenshots of the main dashboard and the Ask Repo AI view:
 ### Prerequisites
 
 - Node.js 18+
-- npm 9+ (or pnpm/yarn)
+- pnpm 10+
 
 ### Installation
 
 ```bash
 git clone https://github.com/your-username/github-repo-insight.git
 cd github-repo-insight
-npm install
+pnpm install
 ```
 
 ### Environment Variables
@@ -103,13 +105,20 @@ cp .env.example .env
 | `RAG_DAILY_LIMIT` | Max questions per user per day (default: `20`) |
 | `RAG_DAILY_INGEST_LIMIT` | Max index/re-index operations per user per day (default: `5`) |
 | `ADMIN_GITHUB_USERS` | Comma-separated GitHub usernames with unlimited usage |
+| `CRON_SECRET` | Shared secret for the daily admin report endpoint |
+| `OPS_WEBHOOK_URL` | Optional webhook destination for live alerts |
+| `RESEND_API_KEY` | Optional Resend API key for report / alert email delivery |
+| `OPS_EMAIL_TO` | Destination email for Resend notifications |
+| `OPS_EMAIL_FROM` | Verified sender email for Resend notifications |
+| `EVAL_INDEX_TTL_HOURS` | Optional TTL for `rag:eval:index:{date}` keys (default: `48`) |
+| `ALERT_SUPPRESS_SECONDS` | Alert cooldown window in seconds (default: `3600`) |
 
 > **Note:** The dashboard works without login (limited to anonymous GitHub rate limits) and without AI keys (the Ask Repo feature will be unavailable). To create a GitHub App, go to [GitHub App settings](https://github.com/settings/apps), enable OAuth user authorization, and configure callback URL as `/auth/callback`. Ask Repo login now uses server-managed HttpOnly session cookies with state + PKCE, and GitHub API requests from the dashboard are proxied through the server so the browser does not hold a GitHub token. For Upstash Vector, sign up at [upstash.com](https://upstash.com) and create a Vector index with 1536 dimensions. For Upstash Redis, create a Redis database at [upstash.com](https://upstash.com). Ask Repo requires GitHub login; regular users are limited to `RAG_DAILY_LIMIT` questions/day (default 20). Redis is also required for chunk-count caching, stream resume, and share links.
 
 ### Development
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) in your browser.
@@ -117,15 +126,15 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ### Build
 
 ```bash
-npm run build
-npm run preview
+pnpm build
+pnpm preview
 ```
 
 ### Testing & Quality
 
 ```bash
-npm test
-npm run lint
+pnpm test
+pnpm lint
 ```
 
 - Tests are organized under `test/` with `test/unit/` and `test/integration/`.
@@ -203,6 +212,7 @@ lib/
 - Stream endpoint: `POST /api/rag/ask` with `{ stream: true }`
 - Resume endpoint: `POST /api/rag/resume` with `{ requestId, lastSeq }`
 - Share endpoint: `POST /api/rag/share` to persist a finished answer and return `/share/:id`
+- Admin report endpoint: `GET /api/admin/report?date=YYYY-MM-DD` with `Authorization: Bearer <CRON_SECRET>`
 - Server implementation: `api/rag/ask.ts`
     - Sets `text/event-stream` headers and disables proxy buffering
     - Sends `delta` events, then `sources`, then `[DONE]`
@@ -250,6 +260,7 @@ This project is designed for **Vercel**:
 1. Push the repository to GitHub
 2. Import the project in [Vercel](https://vercel.com)
 3. Set the environment variables (`GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `AUTH_SESSION_SECRET`, `OPENAI_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, and optionally `GITHUB_AUTH_CALLBACK_URL`, `LLM_PROVIDER`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `RAG_DAILY_LIMIT`, `RAG_DAILY_INGEST_LIMIT`, `ADMIN_GITHUB_USERS`)
+   For ops reporting / alerting, also set `CRON_SECRET` and optionally `OPS_WEBHOOK_URL`, `RESEND_API_KEY`, `OPS_EMAIL_TO`, `OPS_EMAIL_FROM`, `EVAL_INDEX_TTL_HOURS`, `ALERT_SUPPRESS_SECONDS`
 4. Deploy — the `api/` directory is automatically detected as Serverless Functions
 
 ### Ask Repo Architecture

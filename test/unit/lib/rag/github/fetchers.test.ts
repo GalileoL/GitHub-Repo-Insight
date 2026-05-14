@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchRepoData } from '../../../../../lib/rag/github/fetchers.js';
+import {
+  fetchFileContentDetailed,
+  fetchRepoData,
+  prioritizeFetchedSourceFiles,
+  prioritizeSourceFilePaths,
+} from '../../../../../lib/rag/github/fetchers.js';
 
 function makeHeaders(values: Record<string, string> = {}) {
   return {
@@ -165,5 +170,173 @@ describe('fetchRepoData', () => {
       'Invalid repo format: owner/repo/extra',
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchFileContentDetailed', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('treats a pre-aborted external signal as a timeout without issuing a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      fetchFileContentDetailed('owner/repo', 'src/app.ts', 'token-123', { signal: controller.signal }),
+    ).resolves.toEqual({ ok: false, reason: 'timeout' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('prioritizeSourceFilePaths', () => {
+  const rankingData = {
+    commits: [
+      {
+        sha: 'c1',
+        message: 'refactor retry handler in src/auth/retry.ts',
+        html_url: 'https://github.com/owner/repo/commit/c1',
+        date: '2024-03-20T00:00:00Z',
+        author: 'alice',
+      },
+      {
+        sha: 'c2',
+        message: 'retry cleanup and refresh flow',
+        html_url: 'https://github.com/owner/repo/commit/c2',
+        date: '2024-03-21T00:00:00Z',
+        author: 'bob',
+      },
+    ],
+    pulls: [
+      {
+        number: 1,
+        title: 'Retry improvements',
+        body: null,
+        state: 'MERGED',
+        merged_at: '2024-03-22T00:00:00Z',
+        html_url: 'https://github.com/owner/repo/pull/1',
+        created_at: '2024-03-18T00:00:00Z',
+        user: 'alice',
+        labels: [],
+        changedFiles: ['src/auth/retry.ts', 'src/App.tsx'],
+      },
+    ],
+  };
+
+  it('keeps guaranteed entry paths inside the capped selection', () => {
+    const ranked = prioritizeSourceFilePaths([
+      { path: 'src/feature/z.ts', size: 200 },
+      { path: 'api/rag/ask.ts', size: 150 },
+      { path: 'src/index.ts', size: 180 },
+      { path: 'src/App.tsx', size: 400 },
+      { path: 'lib/rag/index.ts', size: 120 },
+    ], rankingData, 2);
+
+    expect(ranked).toHaveLength(2);
+    expect(ranked.map((item) => item.path)).toContain('api/rag/ask.ts');
+    expect(ranked.every((item) => (
+      item.path === 'api/rag/ask.ts'
+      || item.path === 'src/index.ts'
+      || item.path === 'src/App.tsx'
+      || item.path === 'lib/rag/index.ts'
+    ))).toBe(true);
+  });
+
+  it('prefers hotter files over colder ones in the competitive tier', () => {
+    const ranked = prioritizeSourceFilePaths([
+      { path: 'src/auth/retry.ts', size: 500 },
+      { path: 'src/ui/theme.ts', size: 100 },
+      { path: 'src/cache/store.ts', size: 110 },
+    ], rankingData, 2);
+
+    expect(ranked[0]?.path).toBe('src/auth/retry.ts');
+  });
+
+  it('does not over-rank generic basenames from broad commit wording', () => {
+    const ranked = prioritizeSourceFilePaths([
+      { path: 'src/auth.ts', size: 600 },
+      { path: 'src/retry-flow.ts', size: 400 },
+    ], {
+      commits: [
+        {
+          sha: 'c3',
+          message: 'auth cleanup and auth token fixes',
+          html_url: 'https://github.com/owner/repo/commit/c3',
+          date: '2024-03-22T00:00:00Z',
+          author: 'alice',
+        },
+      ],
+      pulls: [],
+    }, 2);
+
+    expect(ranked.map((item) => item.path)).toEqual(['src/retry-flow.ts', 'src/auth.ts']);
+  });
+
+  it('rebalances guaranteed overflow by entry priority instead of alphabetical order', () => {
+    const ranked = prioritizeSourceFilePaths([
+      { path: 'api/z-last.ts', size: 140 },
+      { path: 'api/a-first.ts', size: 160 },
+      { path: 'src/index.ts', size: 120 },
+    ], {
+      commits: [
+        {
+          sha: 'c4',
+          message: 'touch api/z-last.ts',
+          html_url: 'https://github.com/owner/repo/commit/c4',
+          date: '2024-03-22T00:00:00Z',
+          author: 'alice',
+        },
+      ],
+      pulls: [],
+    }, 2);
+
+    expect(ranked.map((item) => item.path)).toEqual(['api/z-last.ts', 'api/a-first.ts']);
+  });
+});
+
+describe('prioritizeFetchedSourceFiles', () => {
+  const rankingData = {
+    commits: [],
+    pulls: [
+      {
+        number: 1,
+        title: 'Expose router helpers',
+        body: null,
+        state: 'MERGED',
+        merged_at: '2024-03-22T00:00:00Z',
+        html_url: 'https://github.com/owner/repo/pull/1',
+        created_at: '2024-03-18T00:00:00Z',
+        user: 'alice',
+        labels: [],
+        changedFiles: ['src/router.ts'],
+      },
+    ],
+  };
+
+  it('uses export-rich files as a secondary ordering signal after fetch', () => {
+    const ranked = prioritizeFetchedSourceFiles([
+      {
+        path: 'src/router.ts',
+        size: 300,
+        content: 'export function classifyQuery() {}\nexport const DEFAULTS = {}',
+      },
+      {
+        path: 'src/theme.ts',
+        size: 300,
+        content: 'const palette = {}',
+      },
+    ], rankingData);
+
+    expect(ranked[0]?.path).toBe('src/router.ts');
   });
 });

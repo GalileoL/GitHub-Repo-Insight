@@ -20,7 +20,7 @@
 
 ```bash
 cd "/Users/galileo/Documents/code/projects/GitHub Repo Insight"
-npm create vite@latest . -- --template react-ts
+pnpm create vite@latest . -- --template react-ts
 ```
 
 If prompted about non-empty directory, choose to proceed (only docs/ exists).
@@ -28,14 +28,14 @@ If prompted about non-empty directory, choose to proceed (only docs/ exists).
 **Step 2: Install dependencies**
 
 ```bash
-npm install react-router-dom @tanstack/react-query zustand echarts echarts-for-react dayjs zod
-npm install -D tailwindcss @tailwindcss/vite prettier
+pnpm add react-router-dom @tanstack/react-query zustand echarts echarts-for-react dayjs zod
+pnpm add -D tailwindcss @tailwindcss/vite prettier
 ```
 
 **Step 3: Verify it builds**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Expected: Build succeeds with no errors.
@@ -110,7 +110,7 @@ body {
 **Step 3: Verify**
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open browser — should show dark background. Kill dev server.
@@ -348,7 +348,7 @@ createRoot(document.getElementById('root')!).render(
 **Step 4: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Expected: Clean build, no errors.
@@ -515,7 +515,7 @@ export const githubApi = {
 **Step 3: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 4: Commit**
@@ -695,7 +695,7 @@ export function transformCommitHeatmap(data: GitHubCommitActivity[]): HeatmapDat
 **Step 2: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 3: Commit**
@@ -842,7 +842,7 @@ export { useIssues } from './useIssues';
 **Step 2: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 3: Commit**
@@ -961,7 +961,7 @@ export default function MainLayout() {
 **Step 3: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 4: Commit**
@@ -1286,7 +1286,7 @@ export { ErrorState } from './ErrorState';
 **Step 7: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 8: Commit**
@@ -1411,7 +1411,7 @@ export default function HomePage() {
 **Step 2: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 3: Commit**
@@ -1647,7 +1647,7 @@ export { RepoOverview } from './RepoOverview';
 **Step 3: Verify build (will fail on missing chart components — expected, they're lazy loaded)**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Note: Build might warn about missing chart modules. That's fine — they'll be created in Phase 7.
@@ -2400,7 +2400,7 @@ export { default as CommitHeatmap } from './CommitHeatmap';
 **Step 3: Verify full build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 4: Commit**
@@ -2563,7 +2563,7 @@ export default function AuthCallback() {
 **Step 2: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 3: Commit**
@@ -2616,7 +2616,7 @@ Ensure `.env` is in `.gitignore`.
 **Step 5: Verify build**
 
 ```bash
-npm run build
+pnpm build
 ```
 
 **Step 6: Commit**

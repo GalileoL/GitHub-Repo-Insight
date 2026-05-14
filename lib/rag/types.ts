@@ -1,8 +1,8 @@
 /** Source type for a RAG chunk */
-export type ChunkType = 'readme' | 'issue' | 'pr' | 'release' | 'commit';
+export type ChunkType = 'readme' | 'issue' | 'pr' | 'release' | 'commit' | 'code_summary';
 
 /** Query intent classification */
-export type QueryCategory = 'documentation' | 'community' | 'changes' | 'general';
+export type QueryCategory = 'documentation' | 'community' | 'changes' | 'code' | 'general';
 
 /** Metadata attached to each chunk stored in the vector DB */
 export interface ChunkMetadata {
@@ -17,6 +17,11 @@ export interface ChunkMetadata {
   releaseName?: string;
   createdAt?: string;
   tags?: string[];
+  symbolNames?: string[];
+  symbolsTruncated?: boolean;
+  language?: string;
+  summaryTruncated?: boolean;
+  lastIndexedSha?: string;
 }
 
 /** A document chunk ready for embedding */
@@ -47,6 +52,7 @@ export interface Source {
 export interface AskResponse {
   answer: string;
   sources: Source[];
+  requestId?: string;
 }
 
 /** Response from the /api/rag/ingest endpoint */
@@ -54,6 +60,9 @@ export interface IngestResponse {
   status: 'ok' | 'error';
   chunksIndexed: number;
   message?: string;
+  codeSummaryCount?: number;
+  codeSummaryFailed?: boolean;
+  codeSummaryFailureReason?: string;
 }
 
 /** Response from the /api/rag/status endpoint */
@@ -63,6 +72,13 @@ export interface StatusResponse {
   lastSync?: string;
 }
 
+/** A source file fetched from a repository for code summary indexing */
+export interface RawSourceFile {
+  path: string;
+  content: string;
+  size: number;
+}
+
 /** Raw GitHub data fetched for ingestion */
 export interface RawRepoData {
   readme: string | null;
@@ -70,6 +86,8 @@ export interface RawRepoData {
   pulls: RawPull[];
   releases: RawRelease[];
   commits: RawCommit[];
+  sourceFiles?: RawSourceFile[];
+  headSha?: string;
 }
 
 export interface RawIssue {
@@ -250,4 +268,76 @@ export interface RetrievalDiagnostics {
     deduplicatedChunks: number;
     finalChunks: number;
   };
+}
+
+// ═══ Code Summary Extraction Types ══════════════════════════════
+
+/** Structured facts extracted from a source file via AST or regex */
+export interface ExtractedCodeFacts {
+  filePath: string;
+  language: string;
+  roleHint: string | null;
+  exports: string[];
+  symbolSignatures: string[];
+  internalHelpers: string[];
+  importPaths: string[];
+  kindHints: string[];
+  jsDocSummary: string | null;
+}
+
+// ═══ Evaluation Event Types ════════════════════════════════════
+
+/** Base fields shared across all evaluation events */
+export interface EvalEventBase {
+  requestId: string;
+  repo: string;
+  timestamp: number;
+  login: string;
+}
+
+/** Retrieval quality metrics */
+export interface RetrievalEvalEvent extends EvalEventBase {
+  type: 'retrieval_eval';
+  queryCategory: QueryCategory;
+  queryIntent: string;
+  rewriteMode: RewriteMode;
+  typeFilter: ChunkType[] | null;
+  firstPassCount: number;
+  finalCount: number;
+  topScore: number;
+  avgScore: number;
+  coverageRatio: number;
+  typeCoverage: ChunkType[];
+  totalRetrievalMs: number;
+}
+
+/** Code fetch metrics (only when code retrieval triggered) */
+export interface CodeFetchEvalEvent extends EvalEventBase {
+  type: 'code_fetch_eval';
+  triggerReason: 'category_code' | 'code_summary_hit' | 'manual';
+  candidateFiles: string[];
+  selectedFiles: string[];
+  fetchedFiles: string[];
+  failedFiles: Array<{ path: string; reason: string }>;
+  fetchLatencyMs: number;
+  fetchSuccessRate: number;
+  bytesInjected: number;
+  truncated: boolean;
+  matchedBy: 'filepath' | 'symbol' | 'rank' | 'mixed';
+  usedSummaryOnlyFallback: boolean;
+}
+
+/** Answer quality proxy metrics */
+export interface AnswerEvalEvent extends EvalEventBase {
+  type: 'answer_eval';
+  answerLength: number;
+  sourceCount: number;
+  hasCodeContext: boolean;
+  answerUsedRetrievedCode: boolean;
+  containsFilePathMention: boolean;
+  containsSymbolMention: boolean;
+  streamCancelled: boolean;
+  totalDurationMs: number;
+  fallbackTriggered: boolean;
+  fallbackReason: 'none' | 'no_match' | 'fetch_failed' | 'context_trimmed';
 }

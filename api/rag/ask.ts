@@ -10,12 +10,15 @@ import {
 import { authenticateRequest, checkRateLimit } from '../../lib/rag/auth/index.js';
 import {
   countRepoChunks,
+  normalizeRepo,
   setStreamSessionSnapshot,
   setStreamSessionProgress,
   deleteStreamSession,
+  writeEvalEventBatch,
 } from '../../lib/rag/storage/index.js';
 import {
   ServerMetricsRecorder,
+  generateRequestId,
   categorizeError,
   logStreamMetrics,
 } from '../../lib/rag/metrics/index.js';
@@ -24,6 +27,66 @@ import { mergeResults, toScoredChunks, buildDiagnosticSnapshots } from '../../li
 import { rerank } from '../../lib/rag/retrieval/rerank.js';
 import type { RetrievalDiagnostics, ScoredChunk } from '../../lib/rag/types.js';
 import { classifyIntent, executeAnalyticsQuery } from '../../lib/rag/intents/index.js';
+import {
+  codeFetchStage,
+  updateCodeFetchAlerts,
+} from '../../lib/rag/code-fetch.js';
+import type { CodeFetchResult } from '../../lib/rag/code-fetch.js';
+
+function buildEvalEvents(args: {
+  repo: string;
+  login: string;
+  category: string;
+  rewriteMode: string;
+  firstPassCount: number;
+  finalCount: number;
+  topScore: number;
+  avgScore: number;
+  coverageRatio: number;
+  totalRetrievalMs?: number;
+  codeFetchResult: CodeFetchResult | null;
+  answerLength: number;
+  sourceCount: number;
+  hasCodeContext: boolean;
+  streamCancelled: boolean;
+}) {
+  return {
+    retrieval: {
+      repo: args.repo,
+      login: args.login,
+      category: args.category,
+      queryCategory: args.category,
+      rewriteMode: args.rewriteMode,
+      firstPassCount: args.firstPassCount,
+      finalCount: args.finalCount,
+      topScore: args.topScore,
+      avgScore: args.avgScore,
+      coverageRatio: args.coverageRatio,
+      ...(typeof args.totalRetrievalMs === 'number'
+        ? { totalRetrievalMs: args.totalRetrievalMs }
+        : {}),
+    },
+    code_fetch: args.codeFetchResult
+      ? {
+          repo: args.repo,
+          login: args.login,
+          fetchedFiles: args.codeFetchResult.fetchedFiles,
+          failedFiles: args.codeFetchResult.failedFiles,
+          summaryOnlyFallback: args.codeFetchResult.usedSummaryOnlyFallback,
+          usedSummaryOnlyFallback: args.codeFetchResult.usedSummaryOnlyFallback,
+        }
+      : undefined,
+    answer: {
+      repo: args.repo,
+      login: args.login,
+      answerLength: args.answerLength,
+      sourceCount: args.sourceCount,
+      usedRetrievedCode: args.hasCodeContext,
+      hasCodeContext: args.hasCodeContext,
+      streamCancelled: args.streamCancelled,
+    },
+  };
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -42,9 +105,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const token = auth.token;
 
-  const { repo, question } = req.body ?? {};
+  const { repo: rawRepo, question } = req.body ?? {};
 
-  if (!repo || typeof repo !== 'string') {
+  if (!rawRepo || typeof rawRepo !== 'string') {
     return res.status(400).json({ error: 'Missing repo in request body' });
   }
 
@@ -52,9 +115,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing question in request body' });
   }
 
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(rawRepo)) {
     return res.status(400).json({ error: 'Invalid repo format. Use owner/name.' });
   }
+
+  const repo = normalizeRepo(rawRepo);
 
   if (question.length > 500) {
     return res.status(400).json({ error: 'Question too long (max 500 characters)' });
@@ -188,7 +253,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 2. First-pass retrieval
     const t0 = Date.now();
-    const firstPass = await hybridSearch(question, repo, 8, typeFilter);
+    const firstPass = await hybridSearch(question, repo, 8, typeFilter, category);
     const firstPassMs = Date.now() - t0;
 
     if (firstPass.length === 0) {
@@ -215,7 +280,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else {
       const t2 = Date.now();
       const rewritePasses = await Promise.all(
-        rewriteResult.candidates.map((c) => hybridSearch(c.query, repo, 8, typeFilter)),
+        rewriteResult.candidates.map((c) => hybridSearch(c.query, repo, 8, typeFilter, category)),
       );
       rewriteSearchMs = Date.now() - t2;
 
@@ -291,6 +356,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       counts: diagnostics.counts,
     }));
 
+    // 6. Code fetch stage — only for code queries with code_summary hits
+    let codeContextPrefix = '';
+    let codeFetchResult: CodeFetchResult | null = null;
+    if (category === 'code') {
+      try {
+        codeFetchResult = await codeFetchStage(chunks, repo, token);
+        if (codeFetchResult.codeContext) {
+          codeContextPrefix = codeFetchResult.codeContext + '\n\n';
+        }
+        if (codeFetchResult.fetchedFiles.length > 0 || codeFetchResult.failedFiles.length > 0) {
+          console.log(JSON.stringify({
+            type: 'code_fetch',
+            repo,
+            fetchedFiles: codeFetchResult.fetchedFiles,
+            failedFiles: codeFetchResult.failedFiles,
+            usedSummaryOnlyFallback: codeFetchResult.usedSummaryOnlyFallback,
+          }));
+        }
+
+        await updateCodeFetchAlerts(repo, codeFetchResult);
+      } catch (codeFetchErr) {
+        console.log(JSON.stringify({
+          type: 'code_fetch_error',
+          repo,
+          error: codeFetchErr instanceof Error ? codeFetchErr.message : 'Unknown error',
+        }));
+        // Degrade gracefully — answer from summaries only
+      }
+    }
+
+    // Merge code context with analytics context
+    const fullContextPrefix = codeContextPrefix + (analyticsContext || '');
+
     const wantStream = req.body?.stream === true;
 
     if (wantStream) {
@@ -311,7 +409,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         question,
         createdAt: Date.now(),
         contextText,
-        contextPrefix: analyticsContext || undefined,
+        contextPrefix: fullContextPrefix || undefined,
         sources,
       });
       await setStreamSessionProgress(requestId, { lastSeq: 0, partialAnswer: '' });
@@ -336,7 +434,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       let seq = 0;
       try {
-        const generator = generateAnswerStream(question, repo, chunks, analyticsContext || undefined);
+        const generator = generateAnswerStream(question, repo, chunks, fullContextPrefix || undefined);
 
         // --- Heartbeat: send ping every 20s to prevent proxy timeout ---
         const startHeartbeat = () => {
@@ -407,12 +505,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const finalMetrics = metrics.end();
         logStreamMetrics(`[ask.ts stream] ${repo}`, finalMetrics);
+
+        void writeEvalEventBatch(requestId, buildEvalEvents({
+          repo,
+          login: auth.login!,
+          category,
+          rewriteMode: rewriteResult.decision.mode,
+          firstPassCount: firstPass.length,
+          finalCount: chunks.length,
+          topScore: firstPassConfidence.topScore,
+          avgScore: firstPassConfidence.avgScore,
+          coverageRatio: firstPassConfidence.coverageRatio,
+          totalRetrievalMs: diagnostics.timing.totalRetrievalMs,
+          codeFetchResult,
+          answerLength: answerSoFar.length,
+          sourceCount: sources.length,
+          hasCodeContext: codeContextPrefix.length > 0,
+          streamCancelled: aborted,
+        }));
+
         res.end();
       }
     } else {
       // --- Non-streaming (backwards compatible) ---
-      const result = await generateAnswer(question, repo, chunks, analyticsContext || undefined);
-      return res.status(200).json(result);
+      const result = await generateAnswer(question, repo, chunks, fullContextPrefix || undefined);
+
+      const evalRequestId = `non-stream-${generateRequestId()}`;
+      void writeEvalEventBatch(evalRequestId, buildEvalEvents({
+        repo,
+        login: auth.login!,
+        category,
+        rewriteMode: rewriteResult.decision.mode,
+        firstPassCount: firstPass.length,
+        finalCount: chunks.length,
+        topScore: firstPassConfidence.topScore,
+        avgScore: firstPassConfidence.avgScore,
+        coverageRatio: firstPassConfidence.coverageRatio,
+        codeFetchResult,
+        answerLength: result.answer.length,
+        sourceCount: result.sources.length,
+        hasCodeContext: codeContextPrefix.length > 0,
+        streamCancelled: false,
+      }));
+
+      return res.status(200).json({ ...result, requestId: evalRequestId });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

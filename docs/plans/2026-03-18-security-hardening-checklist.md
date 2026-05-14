@@ -82,7 +82,7 @@
 - File: `.env.example`
 - Change:
   - Updated callback comments to explicitly document:
-    - `http://localhost:3000/auth/callback` for `vercel dev` / `npm run dev:api`
+    - `http://localhost:3000/auth/callback` for `vercel dev` / `pnpm dev:api`
     - `http://localhost:5173/auth/callback` for Vite dev server
 - Why:
   - Reduces local OAuth misconfiguration risk.
@@ -125,12 +125,12 @@
 
 ## Validation Results
 - Lint: passed
-- Type check (`npx tsc -b`): passed
+- Type check (`pnpm exec tsc -b`): passed
 - No editor errors in modified files after patching.
 
 ## Validation Results (After Screenshot Follow-up Fixes)
 - Lint: passed
-- Type check (`npx tsc -b`): passed
+- Type check (`pnpm exec tsc -b`): passed
 
 ## Files Changed
 - `.env.example`

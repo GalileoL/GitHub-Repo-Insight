@@ -212,3 +212,152 @@ Issues/PRs 没有”按月统计”的现成端点，只能逐月调用 Search A
 **涉及文件：**
 - `src/api/github.ts`（`getMonthlyIssuePrCounts`，第 166-208 行）
 - `src/hooks/useIssues.ts`
+
+---
+
+## 12. Rollup native binary 在本地测试/构建时报 `ERR_DLOPEN_FAILED`
+
+**现象：**
+
+- `pnpm install` 可以成功
+- 但 `pnpm test` / `pnpm build` 在启动 Rollup 时失败
+- 典型报错：
+
+```txt
+Error: Cannot find module @rollup/rollup-darwin-arm64
+...
+[cause]: Error: dlopen(.../rollup.darwin-arm64.node, 0x0001): ...
+code signature ... not valid for use in process:
+mapping process and mapped file (non-platform) have different Team IDs
+```
+
+**原因：**
+
+- 这不是单纯的 `pnpm install` 失败，而是 **Rollup 的 macOS native `.node` 模块在当前运行环境里无法被加载**。
+- 在本项目里，`vite` / `vitest` 会依赖 `rollup`，而默认的 `rollup` 包会尝试加载平台对应的 native binary（如 `@rollup/rollup-darwin-arm64`）。
+- 在桌面代理/受限运行环境下，这类 native binary 可能因为 code signature / library validation 被拒绝加载。
+- 额外补充：
+  - 单独去掉 `xattr`
+  - 或重新 `codesign`
+  - 或 `pnpm rebuild rollup`
+  在这个场景下都**不一定稳定生效**。
+
+**排查过程：**
+
+1. 先跑 `pnpm install`
+   - 结果：安装成功，说明不是常规依赖缺失
+2. 再跑 `pnpm test`
+   - 结果：失败点落在 `node_modules/rollup/dist/native.js`
+3. 检查 `.node` 文件本身
+   - 发现 native binary 实际存在，但 `dlopen` 因签名/Team ID 校验失败
+4. 尝试最小修复
+   - 去掉 `xattr`
+   - 重做 ad-hoc `codesign`
+   - `pnpm rebuild rollup`
+   - 结果：仍不稳定，不能作为仓库级可重复修复
+5. 最终改为 **绕过 native binary**
+   - 将项目顶层 `rollup` 显式切换到 `@rollup/wasm-node`
+
+**最终解决方案：**
+
+- 在 `package.json` 的 `devDependencies` 中使用：
+
+```json
+"rollup": "npm:@rollup/wasm-node@^4.59.0"
+```
+
+- 然后重新安装依赖：
+
+```bash
+pnpm install
+```
+
+- 验证：
+
+```bash
+pnpm ls rollup
+pnpm test
+pnpm build
+```
+
+**修复后的预期：**
+
+- `pnpm ls rollup` 应显示类似：
+
+```txt
+rollup  npm:@rollup/wasm-node@4.60.1
+```
+
+- `pnpm test` 和 `pnpm build` 不再触发 `@rollup/rollup-darwin-arm64` 的 native load 错误
+
+**为什么不用继续修本地签名？**
+
+- 重新签名 `.node` 文件属于**环境级 workaround**
+- 即使本机短暂生效，也不保证：
+  - 其他机器可复现
+  - 重新安装依赖后仍生效
+  - Codex / 桌面代理 / CI 环境都一致
+- 切到 `@rollup/wasm-node` 是**仓库内可重复、可提交、可跨环境共享**的修复
+
+**涉及文件：**
+
+- `package.json`
+- `pnpm-lock.yaml`
+
+---
+
+## 13. Tailwind 4 / `@tailwindcss/oxide` 在本地构建时报 native binding 错误
+
+**现象：**
+
+- `pnpm install` 和 `pnpm test` 都能通过
+- 但 `pnpm build` / `pnpm dev` 在加载 `@tailwindcss/vite` 时失败
+- 典型报错：
+
+```txt
+Error: Cannot find native binding.
+...
+@tailwindcss/oxide-darwin-arm64/tailwindcss-oxide.darwin-arm64.node
+code signature ... not valid for use in process
+```
+
+**原因：**
+
+- `@tailwindcss/vite` 会间接加载 `@tailwindcss/oxide`。
+- `@tailwindcss/oxide` 默认优先使用平台 native binding；在当前 macOS 受限运行环境里，这个 `.node` 文件同样可能因为 code signature / Team ID 校验失败而被拒绝加载。
+- 在当前 `pnpm` 布局下，只要 `@tailwindcss/oxide-wasm32-wasi` 被显式安装到仓库依赖里，`@tailwindcss/oxide` 就能稳定回退到 WASI 实现。
+
+**最终解决方案：**
+
+1. 在 `devDependencies` 中显式添加：
+
+```json
+"@tailwindcss/oxide-wasm32-wasi": "4.2.2"
+```
+
+**验证：**
+
+```bash
+pnpm install
+pnpm dev
+pnpm build
+```
+
+**修复后的预期：**
+
+- `pnpm dev` 和 `pnpm build` 可以正常启动 Tailwind / Vite
+- 终端可能会看到 Node 的 `ExperimentalWarning: WASI is an experimental feature`
+- 这个 warning 当前可以接受；它不会阻止开发、测试或构建完成
+
+**涉及文件：**
+
+- `package.json`
+- `pnpm-lock.yaml`
+
+**如果以后又遇到类似问题：**
+
+优先按这个顺序处理：
+
+1. 先确认是安装失败还是 `dlopen` 失败
+2. 如果是 native `.node` 加载失败，优先考虑是否能切到 WASM 版依赖
+3. 只有在必须使用 native binary 时，才再尝试本机签名/属性修复

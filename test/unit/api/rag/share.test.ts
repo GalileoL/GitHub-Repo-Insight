@@ -78,6 +78,37 @@ describe('POST /api/rag/share', () => {
     expect(payload.sources[1].url).toBe('');
   });
 
+  it('writes shareCreated feedback when requestId is provided', async () => {
+    vi.spyOn(auth, 'authenticateRequest').mockResolvedValue({
+      authenticated: true,
+      login: 'alice',
+      token: 'token',
+    });
+    vi.spyOn(storage, 'setShareEntry').mockResolvedValue();
+    const writeEvalFeedback = vi.spyOn(storage, 'writeEvalFeedback').mockResolvedValue();
+
+    const req: MockReq = {
+      method: 'POST',
+      body: {
+        repo: 'owner/repo',
+        question: 'q',
+        answer: 'a',
+        requestId: 'req_123',
+        sources: [],
+      },
+    };
+    const res = createMockRes();
+
+    await shareHandler(req as never, res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(writeEvalFeedback).toHaveBeenCalledTimes(1);
+    expect(writeEvalFeedback).toHaveBeenCalledWith(
+      'req_123',
+      expect.objectContaining({ shareCreated: true }),
+    );
+  });
+
   it('drops invalid source items and unexpected fields from persistence payload', async () => {
     vi.spyOn(auth, 'authenticateRequest').mockResolvedValue({
       authenticated: true,

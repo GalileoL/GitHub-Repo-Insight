@@ -1,5 +1,6 @@
-import type { RawRepoData, RawIssue, RawPull, RawRelease, RawCommit } from '../types.js';
+import type { RawRepoData, RawIssue, RawPull, RawRelease, RawCommit, RawSourceFile } from '../types.js';
 import { ghFetch, GITHUB_API } from './client.js';
+import { shouldIndexFile } from '../chunking/code-summary.js';
 
 const GITHUB_GRAPHQL_API = `${GITHUB_API}/graphql`;
 
@@ -540,6 +541,335 @@ async function fetchCommits(repo: string, token?: string): Promise<RawCommit[]> 
     date: c.commit.author?.date ?? '',
     author: c.commit.author?.name ?? null,
   }));
+}
+
+// ═══ Source File Fetching (for code summary indexing) ═══════════
+
+const SOURCE_FILE_CAP = 200;
+const GUARANTEED_ENTRY_RULES = [
+  { pattern: /^api\/.+\.[jt]sx?$/, priority: 4 },
+  { pattern: /^(?:src|lib)\/index\.[jt]sx?$/, priority: 3 },
+  { pattern: /^lib\/.+\/index\.[jt]sx?$/, priority: 2 },
+  { pattern: /^src\/App\.[jt]sx?$/, priority: 2 },
+] as const;
+const GENERIC_BASENAME_TOKENS = new Set([
+  'index',
+  'utils',
+  'types',
+  'type',
+  'page',
+  'auth',
+  'store',
+  'hooks',
+  'route',
+  'routes',
+  'handler',
+  'helpers',
+  'common',
+]);
+
+interface GitHubTreeItem {
+  path: string;
+  type: string;
+  size?: number;
+  sha?: string;
+}
+
+interface GitHubTreeResponse {
+  sha: string;
+  tree: GitHubTreeItem[];
+  truncated: boolean;
+}
+
+type SourceTreePath = { path: string; size: number };
+type SourceRankingData = Pick<RawRepoData, 'pulls' | 'commits'>;
+
+function isGuaranteedEntryPath(filePath: string): boolean {
+  return GUARANTEED_ENTRY_RULES.some(({ pattern }) => pattern.test(filePath));
+}
+
+function getGuaranteedEntryPriority(filePath: string): number {
+  return GUARANTEED_ENTRY_RULES.find(({ pattern }) => pattern.test(filePath))?.priority ?? 0;
+}
+
+function basenameWithoutExt(filePath: string): string {
+  const fileName = filePath.split('/').pop() ?? filePath;
+  return fileName.replace(/\.[^.]+$/, '');
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function countCommitPathMentions(filePath: string, commits: RawCommit[]): number {
+  const normalizedPath = filePath.toLowerCase();
+  const basename = basenameWithoutExt(filePath).toLowerCase();
+  if (!basename) return 0;
+
+  const basenamePattern = new RegExp(`(^|[^a-z0-9])${escapeRegex(basename)}([^a-z0-9]|$)`, 'i');
+  const allowBasenameHeuristic = basename.length >= 6 && !GENERIC_BASENAME_TOKENS.has(basename);
+
+  return commits.reduce((count, commit) => {
+    const message = commit.message.toLowerCase();
+    if (message.includes(normalizedPath)) return count + 1;
+    if (allowBasenameHeuristic && basenamePattern.test(message)) return count + 1;
+    return count;
+  }, 0);
+}
+
+function countPrHitsByPath(filePath: string, pulls: RawPull[]): number {
+  return pulls.reduce((count, pull) => (
+    count + (pull.changedFiles?.filter((changedPath) => changedPath === filePath).length ?? 0)
+  ), 0);
+}
+
+function estimateExportCount(filePath: string, content: string): number {
+  if (/\.(ts|tsx|js|jsx)$/.test(filePath)) {
+    return (content.match(/\bexport\b/g) ?? []).length;
+  }
+  if (/\.py$/.test(filePath)) {
+    return (content.match(/^(?:def|class|async def)\s+/gm) ?? []).length;
+  }
+  if (/\.go$/.test(filePath)) {
+    return (content.match(/^func\s+[A-Z]\w*/gm) ?? []).length;
+  }
+  return 0;
+}
+
+function scoreSize(size: number): number {
+  return 1 / Math.max(size, 1);
+}
+
+function normalizeWeight(value: number, maxValue: number): number {
+  if (maxValue <= 0) return 0;
+  return value / maxValue;
+}
+
+export function prioritizeSourceFilePaths(
+  paths: SourceTreePath[],
+  rankingData?: SourceRankingData,
+  cap: number = SOURCE_FILE_CAP,
+): SourceTreePath[] {
+  const prHitCounts = new Map<string, number>();
+  const changeFrequencies = new Map<string, number>();
+
+  for (const item of paths) {
+    prHitCounts.set(item.path, rankingData ? countPrHitsByPath(item.path, rankingData.pulls) : 0);
+    changeFrequencies.set(item.path, rankingData ? countCommitPathMentions(item.path, rankingData.commits) : 0);
+  }
+
+  const maxPrHits = Math.max(...prHitCounts.values(), 0);
+  const maxChangeFrequency = Math.max(...changeFrequencies.values(), 0);
+  const maxInverseSize = Math.max(...paths.map((item) => scoreSize(item.size)), 0);
+
+  const rankCompetitiveScore = (item: SourceTreePath): number => (
+    normalizeWeight(changeFrequencies.get(item.path) ?? 0, maxChangeFrequency) * 0.4 +
+    normalizeWeight(prHitCounts.get(item.path) ?? 0, maxPrHits) * 0.3 +
+    normalizeWeight(scoreSize(item.size), maxInverseSize) * 0.3
+  );
+
+  const rankGuaranteedScore = (item: SourceTreePath): number => (
+    getGuaranteedEntryPriority(item.path) * 10 + rankCompetitiveScore(item)
+  );
+
+  if (paths.length <= cap) {
+    return [...paths].sort((a, b) => {
+      const guaranteedDelta = getGuaranteedEntryPriority(b.path) - getGuaranteedEntryPriority(a.path);
+      if (guaranteedDelta !== 0) return guaranteedDelta;
+      const scoreDelta = rankCompetitiveScore(b) - rankCompetitiveScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      if (a.size !== b.size) return a.size - b.size;
+      return a.path.localeCompare(b.path);
+    });
+  }
+
+  const guaranteed = paths.filter((item) => isGuaranteedEntryPath(item.path));
+  const guaranteedMap = new Set(guaranteed.map((item) => item.path));
+  const remaining = paths.filter((item) => !guaranteedMap.has(item.path));
+  const guaranteedSelected = guaranteed
+    .sort((a, b) => {
+      const scoreDelta = rankGuaranteedScore(b) - rankGuaranteedScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      if (a.size !== b.size) return a.size - b.size;
+      return a.path.localeCompare(b.path);
+    })
+    .slice(0, Math.min(cap, guaranteed.length));
+
+  const competitive = [...remaining]
+    .sort((a, b) => {
+      const scoreDelta = rankCompetitiveScore(b) - rankCompetitiveScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      if (a.size !== b.size) return a.size - b.size;
+      return a.path.localeCompare(b.path);
+    })
+    .slice(0, Math.max(0, cap - guaranteedSelected.length));
+
+  return [...guaranteedSelected, ...competitive];
+}
+
+export function prioritizeFetchedSourceFiles(
+  files: RawSourceFile[],
+  rankingData?: SourceRankingData,
+): RawSourceFile[] {
+  if (files.length <= 1) return files;
+
+  const prHitCounts = new Map<string, number>();
+  const changeFrequencies = new Map<string, number>();
+  const exportCounts = new Map<string, number>();
+
+  for (const file of files) {
+    prHitCounts.set(file.path, rankingData ? countPrHitsByPath(file.path, rankingData.pulls) : 0);
+    changeFrequencies.set(file.path, rankingData ? countCommitPathMentions(file.path, rankingData.commits) : 0);
+    exportCounts.set(file.path, estimateExportCount(file.path, file.content));
+  }
+
+  const maxPrHits = Math.max(...prHitCounts.values(), 0);
+  const maxChangeFrequency = Math.max(...changeFrequencies.values(), 0);
+  const maxExportCount = Math.max(...exportCounts.values(), 0);
+  const maxInverseSize = Math.max(...files.map((file) => scoreSize(file.size)), 0);
+
+  return [...files].sort((a, b) => {
+    const aScore =
+      normalizeWeight(changeFrequencies.get(a.path) ?? 0, maxChangeFrequency) * 0.4 +
+      normalizeWeight(prHitCounts.get(a.path) ?? 0, maxPrHits) * 0.3 +
+      normalizeWeight(exportCounts.get(a.path) ?? 0, maxExportCount) * 0.2 +
+      normalizeWeight(scoreSize(a.size), maxInverseSize) * 0.1;
+    const bScore =
+      normalizeWeight(changeFrequencies.get(b.path) ?? 0, maxChangeFrequency) * 0.4 +
+      normalizeWeight(prHitCounts.get(b.path) ?? 0, maxPrHits) * 0.3 +
+      normalizeWeight(exportCounts.get(b.path) ?? 0, maxExportCount) * 0.2 +
+      normalizeWeight(scoreSize(b.size), maxInverseSize) * 0.1;
+
+    if (bScore !== aScore) return bScore - aScore;
+    if (a.size !== b.size) return a.size - b.size;
+    return a.path.localeCompare(b.path);
+  });
+}
+
+/** Fetch the repo file tree and filter to indexable source files */
+async function fetchRepoTree(repo: string, token?: string): Promise<{ paths: Array<{ path: string; size: number }>; headSha: string }> {
+  const tree = await ghFetch<GitHubTreeResponse>(
+    `/repos/${repo}/git/trees/HEAD?recursive=1`,
+    token,
+  );
+
+  const paths = tree.tree
+    .filter((item) => item.type === 'blob' && shouldIndexFile(item.path, item.size))
+    .map((item) => ({ path: item.path, size: item.size ?? 0 }));
+
+  return { paths, headSha: tree.sha };
+}
+
+/** Reason a single file fetch failed, surfaced into eval events. */
+export type FileFetchFailureReason =
+  | 'not_found'
+  | 'forbidden'
+  | 'too_large'
+  | 'timeout'
+  | 'rate_limited'
+  | 'unknown';
+
+/** Result from a single file fetch attempt. Either content or a classified reason. */
+export type FileFetchResult =
+  | { ok: true; content: string }
+  | { ok: false; reason: FileFetchFailureReason; status?: number };
+
+const FETCH_FILE_TIMEOUT_MS = 2500;
+
+function classifyFetchStatus(status: number): FileFetchFailureReason {
+  if (status === 404) return 'not_found';
+  if (status === 403) return 'forbidden';
+  if (status === 429) return 'rate_limited';
+  if (status === 413) return 'too_large';
+  return 'unknown';
+}
+
+/**
+ * Fetch the raw content of a single file via the GitHub Contents API.
+ *
+ * Returns `null` for backwards compatibility with callers that only need the
+ * content; use `fetchFileContentDetailed` when the failure reason matters for
+ * evaluation or retries.
+ */
+export async function fetchFileContent(
+  repo: string,
+  filePath: string,
+  token?: string,
+): Promise<string | null> {
+  const result = await fetchFileContentDetailed(repo, filePath, token);
+  return result.ok ? result.content : null;
+}
+
+/** Detailed variant of fetchFileContent that classifies failures. */
+export async function fetchFileContentDetailed(
+  repo: string,
+  filePath: string,
+  token?: string,
+  options?: { signal?: AbortSignal },
+): Promise<FileFetchResult> {
+  const controller = new AbortController();
+  const abortExternal = () => controller.abort();
+  const externalSignal = options?.signal;
+  if (externalSignal?.aborted) {
+    return { ok: false, reason: 'timeout' };
+  }
+  externalSignal?.addEventListener('abort', abortExternal);
+  const timer = setTimeout(() => controller.abort(), FETCH_FILE_TIMEOUT_MS);
+
+  try {
+    const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+    const res = await fetch(`${GITHUB_API}/repos/${repo}/contents/${encodedPath}`, {
+      headers: {
+        Accept: 'application/vnd.github.raw+json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      return { ok: false, reason: classifyFetchStatus(res.status), status: res.status };
+    }
+
+    return { ok: true, content: await res.text() };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { ok: false, reason: 'timeout' };
+    }
+    return { ok: false, reason: 'unknown' };
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', abortExternal);
+  }
+}
+
+/** Fetch source files for code summary indexing, with cap and priority */
+export async function fetchRepoSourceFiles(
+  repo: string,
+  token?: string,
+  rankingData?: SourceRankingData,
+): Promise<{ files: RawSourceFile[]; headSha: string }> {
+  const { paths, headSha } = await fetchRepoTree(repo, token);
+  const candidates = prioritizeSourceFilePaths(paths, rankingData, SOURCE_FILE_CAP);
+
+  // Fetch file contents in batches of 10 to avoid overwhelming the API
+  const files: RawSourceFile[] = [];
+  const BATCH_SIZE = 10;
+
+  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+    const batch = candidates.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (item) => {
+        const content = await fetchFileContent(repo, item.path, token);
+        if (!content) return null;
+        return { path: item.path, content, size: item.size } satisfies RawSourceFile;
+      }),
+    );
+    for (const r of results) {
+      if (r) files.push(r);
+    }
+  }
+
+  return { files: prioritizeFetchedSourceFiles(files, rankingData), headSha };
 }
 
 /** Fetch all data sources for a repository */

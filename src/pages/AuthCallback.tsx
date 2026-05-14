@@ -6,14 +6,13 @@ export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const setUser = useAuthStore((s) => s.setUser);
-  const [error, setError] = useState<string | null>(null);
+  const [asyncError, setAsyncError] = useState<string | null>(null);
+  const code = searchParams.get('code');
+  const state = searchParams.get('state');
+  const immediateError = !code || !state ? 'Missing authorization code or state' : null;
 
   useEffect(() => {
-    const code = searchParams.get('code');
-    const state = searchParams.get('state');
-
     if (!code || !state) {
-      setError('Missing authorization code or state');
       return;
     }
 
@@ -41,12 +40,14 @@ export default function AuthCallback() {
         sessionStorage.removeItem('auth-return-to');
         navigate(returnTo, { replace: true });
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Authentication failed');
+        setAsyncError(err instanceof Error ? err.message : 'Authentication failed');
       }
     }
 
     exchangeToken(code, state);
-  }, [searchParams, setUser, navigate]);
+  }, [code, navigate, setUser, state]);
+
+  const error = immediateError ?? asyncError;
 
   if (error) {
     return (

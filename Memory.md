@@ -13,7 +13,7 @@ Keep it up to date when architecture, APIs, or conventions change.
 
 ## 2) Top-Level Structure
 - `src/`: frontend app (pages, components, hooks, stores, utils)
-- `api/`: Vercel serverless endpoints (`auth`, `rag/ask`, `rag/ingest`, `rag/resume`, `rag/share`, `rag/status`)
+- `api/`: Vercel serverless endpoints (`auth/[action]`, `rag/ask`, `rag/ingest`, `rag/resume`, `rag/share`, `rag/status`, `rag/feedback`)
 - `lib/rag/`: shared backend logic (auth, retrieval, llm, storage, chunking, github fetchers)
 - `docs/plans/`: architecture and hardening notes
 - `README.md`: user-facing docs
@@ -29,38 +29,53 @@ Keep it up to date when architecture, APIs, or conventions change.
   - Chart components render language, commits, contributors, issues/PR trends, releases
 - Ask Repo flow:
   - `AskRepoPanel` checks index status (`/api/rag/status`)
-  - User signs in via `/api/auth/start` (server-generated state + PKCE), callback exchanges code at `/api/auth/github`
+  - User signs in via `/api/auth/start` (served by `api/auth/[action].ts`, server-generated state + PKCE), callback exchanges code at `/api/auth/github`
   - Auth session is stored in signed HttpOnly cookie (`gh_app_session`)
   - User triggers index (`/api/rag/ingest`) if needed
   - User asks question (`/api/rag/ask`, optional streaming)
-  - Backend runs classify -> hybrid retrieval -> **conditional query rewrite** -> merge -> rerank -> LLM answer
+  - Backend runs classify -> hybrid retrieval -> **conditional query rewrite** -> merge -> rerank -> **code fetch stage (code queries only)** -> LLM answer
   - Frontend renders answer and source citations
   - User can optionally create a share link, which is stored in Redis and expires after 7 days
   - Pure analytics intent path can return deterministic answers directly (bypasses RAG retrieval/LLM rewriting)
 
 ## 4) RAG Architecture (Key Files)
 - API endpoints:
-  - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, streaming/non-streaming answer
-  - `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk, embed, upsert (REST fallback only when needed)
-  - `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context)
-  - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis
+  - `api/auth/[action].ts`: consolidated auth endpoint for `start|github|session|logout`; kept to one function because Vercel Hobby deployments fail above 12 serverless functions
+  - `api/rag/ask.ts`: auth, validation, rate-limit, retrieval, **conditional query rewrite**, **code fetch stage**, streaming/non-streaming answer, eval event writes
+- `api/rag/ingest.ts`: fetch GitHub data via a GraphQL repository snapshot, chunk (including **code_summary**), embed, upsert (REST fallback only when needed); successful responses now surface `codeSummaryCount` plus `codeSummaryFailed/codeSummaryFailureReason` when source indexing degrades
+- `api/rag/resume.ts`: resume interrupted SSE answer streams from Redis checkpoints (partial answer + exact prompt context); when a snapshot is missing it rebuilds retrieval, re-runs code-fetch enrichment for code queries, writes eval events, and updates code-fetch alert streaks
+  - `api/rag/share.ts` / `api/rag/share/[id].ts`: persist and load share links from Redis; share creation writes eval feedback
   - `api/rag/status.ts`: indexed/chunk count
+- `api/rag/feedback.ts`: request-level feedback endpoint (share/retry/thumbs) — validates `requestId` ownership against the stored retrieval login before writing `feedback:*`
 - Retrieval:
-  - `lib/rag/retrieval/router.ts`: query classification (4 categories: documentation/community/changes/general)
-  - `lib/rag/retrieval/hybrid.ts`: vector + keyword merge (RRF K=60, internally calls rerank)
+  - `lib/rag/retrieval/router.ts`: query classification (5 categories: documentation/community/changes/general/**code**); code queries get `typeFilter: ['code_summary']`
+  - `lib/rag/retrieval/hybrid.ts`: vector + keyword merge (RRF K=60, internally calls rerank); passes `queryCategory` to both keyword and vector paths so non-code queries exclude `code_summary` on both legs
+  - `lib/rag/retrieval/keyword.ts`: K1 isolation — non-code queries exclude `code_summary`; code queries include only `code_summary`
   - `lib/rag/retrieval/rerank.ts`: heuristic reranker (recency +0.15, content length +0.10, title match +0.05/term)
-  - `lib/rag/retrieval/rewrite.ts`: **NEW** — conditional query rewrite (analysis, confidence, decision, candidates)
-  - `lib/rag/retrieval/merge.ts`: **NEW** — multi-pass result merge, dedup, diagnostic snapshots
+  - `lib/rag/retrieval/rewrite.ts`: conditional query rewrite (analysis, confidence, decision, candidates)
+  - `lib/rag/retrieval/merge.ts`: multi-pass result merge, dedup, diagnostic snapshots
+- Chunking:
+  - `lib/rag/chunking/code-summary.ts`: TS/JS AST extractor (TypeScript Compiler API) + regex fallback for other languages; outputs `code_summary` chunks with `symbolNames`, `language`, `lastIndexedSha`, and truncation metadata
+  - `lib/rag/chunking/index.ts`: orchestrates all chunk types including new `code_summary`
+- Runtime enrichment:
+  - `lib/rag/code-fetch.ts`: shared code-query source enrichment used by both `api/rag/ask.ts` and `api/rag/resume.ts`; exports `extractCodeWindow`, `codeFetchStage`, and code-fetch alert helpers
 - LLM:
-  - `lib/rag/llm/index.ts`: provider config, prompt, stream/non-stream answer generation, **`rewriteQueries()` for strong-llm mode**
+  - `lib/rag/llm/index.ts`: provider config, prompt (real source code takes priority over summaries), stream/non-stream answer generation, `rewriteQueries()` for strong-llm mode
 - Storage:
-  - `lib/rag/storage/index.ts`: Upstash Vector operations + Redis helpers for chunk counts, stream sessions, and share entries
+  - `lib/rag/storage/index.ts`: Upstash Vector ops; **K2 physical split** via `fetchCoreRepoChunks` (readme/issue/pr/release/commit prefix scans) and `fetchCodeSummaryChunks` (`{repo}:code:` prefix); Redis helpers for chunk counts, stream sessions, share entries, **eval events** (`writeEvalEventBatch`, `writeEvalFeedback`, `getEvalFields`) and per-day eval secondary indexes (`rag:eval:index:{YYYY-MM-DD}`)
+- Ops / monitoring:
+  - `lib/admin/alert-manager.ts`: Redis-backed streak / threshold alerts with suppress keys
+  - `lib/admin/metrics-aggregator.ts`: indexed daily metrics hydration from eval hashes
+  - `lib/admin/report-renderer.ts`: markdown daily report formatter
+  - `lib/admin/notifier.ts`: scenario-aware notification routing (`Webhook -> Resend -> structured log` for live alerts, `Resend -> structured log` for daily report)
+  - `api/admin/report.ts`: CRON-protected daily report endpoint; when `date` is omitted it reports the previous UTC day by default
 - Auth and quotas:
   - `lib/rag/auth/index.ts`: session-cookie auth, GitHub token verify/refresh, daily ask/ingest limits in Redis
 - GitHub API client:
   - `src/api/github.ts`: shared frontend GitHub client with `If-None-Match` conditional caching for REST GETs, GraphQL dashboard snapshot, GraphQL contributors aggregation (with REST fallback), and GraphQL monthly issue/PR aliased counting
+  - `lib/rag/github/fetchers.ts`: server-side GitHub fetchers; **`fetchFileContentDetailed`** for on-demand source code fetch with classified failure reasons (`not_found | forbidden | too_large | timeout | rate_limited | unknown`); two-phase file prioritization for ingest
 - Types:
-  - `lib/rag/types.ts`: all shared types including 15 query rewrite interfaces
+  - `lib/rag/types.ts`: all shared types including 15 query rewrite interfaces, `code_summary` ChunkType, `code` QueryCategory, code/eval metadata types, `FileFetchFailureReason`
 
 ## 5) Conditional Query Rewrite Pipeline (NEW — 2026-03-31)
 
@@ -189,16 +204,16 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
   - External telemetry sink and dashboards
 
 ## 9) Commands
-- Install: `npm install`
-- Frontend dev: `npm run dev`
-- API dev (Vercel): `npm run dev:api`
-- Build: `npm run build`
-- Test: `npm test`
-- Lint: `npm run lint`
-- Preview: `npm run preview`
+- Install: `pnpm install`
+- Frontend dev: `pnpm dev`
+- API dev (Vercel): `pnpm dev:api`
+- Build: `pnpm build`
+- Test: `pnpm test`
+- Lint: `pnpm lint`
+- Preview: `pnpm preview`
 
 ## CI Checks
-- `.github/workflows/ci.yml`: runs `npm ci`, `npx tsc -b`, `npm run lint`, `npm test`, `npx vite build`
+- `.github/workflows/ci.yml`: runs `pnpm install --frozen-lockfile`, `pnpm exec tsc -b`, `pnpm lint`, `pnpm test`, `pnpm build`
 - Trigger scope: PRs to `main` and pushes to `main`
 
 ## 10) Environment Essentials
@@ -244,6 +259,10 @@ Single JSON log line per request with: mode, reasonCodes, rewriteScore, riskScor
 - `rag:stream:progress:<requestId>`: SSE progress checkpoint (lastSeq/partialAnswer), 5 min TTL
 - `rag:stream:<requestId>`: legacy combined session key kept for backwards compatibility
 - `rag:share:<shareId>`: shared answer payload, 7 day TTL
+- `rag:eval:<requestId>`: per-request evaluation hash (retrieval/code_fetch/answer/feedback events), 48h TTL
+- `rag:eval:index:<YYYY-MM-DD>`: per-day requestId set used by daily report aggregation, 48h TTL by default
+- `rag:alert:streak:<type>:<repo>`: Redis streak counters for live alerts
+- `rag:alert:suppress:<type>:<repo>`: alert suppress keys to avoid duplicate notifications
 
 ## 12) Update Checklist (When Editing This Repo)
 Update this file when any of these changes happen:
@@ -321,17 +340,61 @@ Update this file when any of these changes happen:
 
 ### Phase 8 (Priority: Low)
 **Monitoring & hardening**
-- [ ] Add server-side telemetry / storage for stream metrics (e.g., send to Datadog or App Insights)
+- [x] Add Redis-backed eval indexing, daily report aggregation, and notifier-based ops alerts
 - [ ] Harden retry/resume logic against payload tampering
 - [ ] Add intentional rate limiting for shared links
 - [ ] Improve shared link UX with expiration notice
 - Files: `lib/rag/metrics/index.ts`, `api/rag/*`, `src/features/rag/*`
 **Documentation & Monitoring**
 - [ ] Write stream interruption guide for users (when to expect cancel/retry)
-- [ ] Add logging: stream lifecycle events (start, chunk received, complete, error)
+- [x] Add logging: stream lifecycle events (start, chunk received, complete, error)
 - [ ] Dashboard: streaming stats (success rate, avg duration, cancel rate by repo)
-- [ ] Alert on: high error rate, > threshold connection churn
+- [x] Alert on: timeout streak / ingest failure streak / low GitHub rate limit thresholds via notifier
 - Files: `docs/`, (new) `lib/rag/logging/index.ts`, (new) `api/analytics/streams.ts`
+
+## 16) Code Summary + On-Demand Fetch Pipeline (NEW — 2026-04-17)
+
+### Overview
+Ingest now extracts code summaries from TS/JS source files (+ regex fallback for other languages) and stores them as `code_summary` chunks. When a user asks a code-related question, the ask pipeline fetches actual source files on demand for accurate answers.
+
+### Ingest Changes
+- File tree fetched from GitHub Contents API; filtered to `src/**`, `lib/**`, `api/**`; capped at 200 files
+- Two-phase priority: (1) hard-protected entry points (`api/**/*.ts`, `lib/**/index.ts`, `src/App.tsx`), (2) remaining slots sorted by `changeFrequency×0.4 + prHitCount×0.3 + exportCount×0.2 + fileSizeInverse×0.1`
+- Code summary chunk ID format: `{repo}:code:{normalizedFilePath}` where `filePath` is NFC-normalized and `:` is escaped as `%3A`
+- `symbolNames` (capped), `symbolsTruncated`, `language`, `summaryTruncated` stored in metadata
+
+### Ask Pipeline — Code Fetch Stage
+```
+classifyQuery → category='code'
+hybridSearch (K1: code_summary only in keyword path; K2: fetchCodeSummaryChunks prefix scan)
+rerank → codeFetchStage → generateAnswer
+```
+- `codeFetchStage` runs only when `category === 'code'`
+- Scores candidate files by rerank score + filePath hit + symbol hit + entry-point hit
+- Fetches up to 3 files concurrently; 2s per-file timeout, 3s total (`Promise.race` + AbortController)
+- Files > 100 KB skipped
+- Symbol window extraction: finds symbol in fetched content, extracts ±50-100 lines; falls back to file head
+- Per-file cap: 2500 chars; total cap: 6000 chars
+- Failure degrades to summary-only; classified reason stored in eval event
+
+### K1/K2 Retrieval Isolation
+- **K1 (logical):** both `keywordSearch` and `vectorSearch` receive `queryCategory`; non-code queries exclude `code_summary`
+- **K2 (physical):** `fetchCoreRepoChunks` scans `{repo}:readme:`, `{repo}:issue:`, etc. separately; `fetchCodeSummaryChunks` scans `{repo}:code:` prefix — code_summary vectors never touch the wire for non-code queries
+
+### Eval Events
+Each ask/resume request writes a `rag:eval:{requestId}` Redis Hash (48h TTL) with fields:
+- `retrieval`: category, topK, scores
+- `code_fetch` (code path only): selectedFiles, failedFiles (with classified reason), usedSummaryOnlyFallback
+- `answer`: model, answerUsedRetrievedCode
+- `feedback:*`: written via `/api/rag/feedback` or share creation as independent hash fields (`feedback:thumbsUp`, `feedback:userRetried`, etc.) so concurrent writes do not overwrite each other
+- Eval writes now index the requestId set first, then batch-write request fields to reduce half-written / unindexed hashes
+
+### Phase 2 Future Work (Not Yet Implemented)
+- Multi-language high-precision AST (Python, Go, Rust, Java)
+- Incremental indexing (currently full rebuild on every ingest)
+- Upstash namespace separation for code_summary vs core chunks
+- K2 server-side metadata filter POC (Upstash `range()` prefix is current approach)
+- External dashboarding beyond the current Redis-backed daily report + notifier pipeline
 
 ## 14) Known Risks & Constraints
 - Markdown renderer currently intentionally constrained; Phase 5 needed for full feature set

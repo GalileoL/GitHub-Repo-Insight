@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { askRepoStream } from '../api/rag';
+import { askRepoStream, submitEvalFeedback } from '../api/rag';
 import { useAskHistory } from './useAskHistory';
 import type { Source } from '../types';
 
@@ -108,6 +108,10 @@ export function useAskRepo(repo: string) {
         streamCompletedRef.current = true;
         answerRef.current = cached.answer;
         sourcesRef.current = cached.sources;
+        requestIdRef.current = null;
+        lastSeqRef.current = 0;
+        isResumingRef.current = false;
+        retryCountRef.current = 0;
         return;
       }
 
@@ -224,6 +228,10 @@ export function useAskRepo(repo: string) {
     // Reset retry counter when user manually triggers retry
     retryCountRef.current = 0;
 
+    if (requestIdRef.current) {
+      void submitEvalFeedback(requestIdRef.current, { userRetried: true }).catch(() => {});
+    }
+
     // If we have an active request ID, try resuming the previous stream
     if (requestIdRef.current) {
       // Start a new abort controller for the resumed stream
@@ -275,7 +283,7 @@ export function useAskRepo(repo: string) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const retryable = /failed to fetch|network|timeout|connection|abort/i.test(message);
-          const sessionGone = /session not found|not found or expired/i.test(message);
+          const sessionGone = /session not found|not found or expired|checkpoint is stale/i.test(message);
           if (sessionGone) {
             // Session expired or was never stored — fall back to a fresh ask
             requestIdRef.current = null;
@@ -306,10 +314,18 @@ export function useAskRepo(repo: string) {
   const showCached = useCallback(
     (entry: { answer: string; sources: Source[] }) => {
       mutation.reset();
+      setPreviousAnswer(null);
       setStreamingAnswer(entry.answer);
       setSources(entry.sources);
       setStreamStatus('done');
       setStreamError(null);
+      streamCompletedRef.current = true;
+      answerRef.current = entry.answer;
+      sourcesRef.current = entry.sources;
+      requestIdRef.current = null;
+      lastSeqRef.current = 0;
+      isResumingRef.current = false;
+      retryCountRef.current = 0;
     },
     [mutation],
   );
@@ -342,6 +358,16 @@ export function useAskRepo(repo: string) {
     setStreamingAnswer(text);
   }, []);
 
+  const sendFeedback = useCallback((kind: 'thumbsUp' | 'thumbsDown') => {
+    if (!requestIdRef.current) return;
+    void submitEvalFeedback(requestIdRef.current, {
+      thumbsUp: kind === 'thumbsUp',
+      thumbsDown: kind === 'thumbsDown',
+    }).catch(() => {});
+  }, []);
+
+  const getRequestId = useCallback(() => requestIdRef.current, []);
+
   return {
     ask: mutation.mutate,
     showCached,
@@ -362,5 +388,8 @@ export function useAskRepo(repo: string) {
     history,
     updateEntry,
     clearHistory: clearAllHistory,
+    getRequestId,
+    sendThumbsUp: () => sendFeedback('thumbsUp'),
+    sendThumbsDown: () => sendFeedback('thumbsDown'),
   };
 }
