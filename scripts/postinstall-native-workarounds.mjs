@@ -1,4 +1,4 @@
-import { access, readFile, readdir, writeFile } from 'node:fs/promises';
+import { open, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,19 +44,17 @@ exports.xxhashBase16 = wasmNative.xxhashBase16;
 `;
 
 async function patchTailwindLightningCss() {
+  let handle;
   try {
-    await access(tailwindLightningCssEntry);
+    handle = await open(tailwindLightningCssEntry, 'r+');
+    await handle.truncate(0);
+    await handle.writeFile(proxySource, 'utf8');
+    console.log('[postinstall] Patched @tailwindcss/node to use root lightningcss package');
   } catch {
     return;
+  } finally {
+    await handle?.close().catch(() => {});
   }
-
-  const current = await readFile(tailwindLightningCssEntry, 'utf8');
-  if (current === proxySource) {
-    return;
-  }
-
-  await writeFile(tailwindLightningCssEntry, proxySource, 'utf8');
-  console.log('[postinstall] Patched @tailwindcss/node to use root lightningcss package');
 }
 
 async function patchPnPmNativeRollup() {
