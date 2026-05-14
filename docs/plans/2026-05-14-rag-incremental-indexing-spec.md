@@ -42,8 +42,9 @@
 - `ChunkMetadata.lastIndexedSha`: 文件 blob SHA（GitHub tree 接口返回，非 commit SHA）
 - `ChunkMetadata.commitSha`: 仓库级 commit SHA（保留，用于 UI 展示）
 
-新增（可选）：
-- `ChunkMetadata.indexedAt: number` — Unix 毫秒时间戳，用于 LRU/过期清理。
+新增：
+- `ChunkMetadata.indexedAt: number`（可选）— Unix 毫秒时间戳，用于 LRU/过期清理。
+- `ChunkMetadata.chunkerVersion: string` — 切分逻辑版本号（例：`"code-summary@2"`）。与 `schemaVersion` 解耦：前者标识切分逻辑迭代（query 改进、AST 提取调整），后者标识 metadata 结构变化。任一不匹配都触发对应文件的重索引。
 
 ### 3.3 流程
 
@@ -60,9 +61,11 @@ ingest(repo, commitSha):
   5. fetch file contents only for toAdd (10/批，已有)
   6. buildCodeSummaryChunks(toAdd) → chunks
   7. embedTexts(chunks.map(c => c.content))      // 见 parallel-embedding spec
-  8. upsertChunks(chunks)                        // 仅写差异
-  9. deleteChunksByIds(toDelete.map(e => e.chunkId))
+  8. upsertChunks(chunks)                        // ⚠️ 必须先写：宁可临时重叠也不能丢
+  9. deleteChunksByIds(toDelete.map(e => e.chunkId))  // upsert 成功后才执行
   10. metrics.emit({ added, kept, deleted, total })
+
+**写入顺序约束（P0）**：upsert 必须先于 delete。若中间崩溃，索引最多出现「旧 chunk + 新 chunk 重叠」状态（下次 ingest 自然收敛），永远不会出现「旧已删、新未写」的召回空洞。
 ```
 
 ### 3.4 关键 API 新增
@@ -90,11 +93,18 @@ export async function deleteChunksByIds(ids: string[]): Promise<void>
   - 接收新参数 `mode: 'full' | 'incremental'`，默认 `incremental`。
   - 全量模式仍走旧路径（首次索引、metadata schema 升级时使用）。
 
-### 3.6 触发全量重建的条件
+### 3.6 触发重索引的条件
+
+**全量重建（整仓）**：
 1. 显式 `mode=full`。
 2. `fetchCodeSummaryIndex` 返回为空（首次索引）。
-3. metadata schema version 提升（未来用 `ChunkMetadata.schemaVersion` 字段判别）。
+3. metadata `schemaVersion` 提升（结构升级）。
 4. ENV 开关 `RAG_FORCE_FULL_REINDEX=1`。
+
+**单文件重索引**（落入 `toAdd`）：
+- `blobSha` 变化（内容修改）。
+- `chunkerVersion` 与当前不匹配（切分逻辑升级）。
+- `lastIndexedSha` 缺失（早期 chunk 回填）。
 
 ---
 
@@ -109,13 +119,15 @@ export async function deleteChunksByIds(ids: string[]): Promise<void>
 | blobSha 缺失（理论不应发生） | 视为 toAdd，强制重嵌 |
 | 同 commit 重复 ingest | toAdd=0、toDelete=0，整体 no-op（节省 100% 嵌入费用） |
 
-### 4.1 安全护栏：避免「灾难性 delete」
+### 4.1 安全护栏：避免「灾难性 delete」与超大仓 OOM
 新增配置：
 ```ts
-const MAX_DELETE_RATIO = 0.2;   // 单次 ingest 最多删除 20% 已有 chunk
-const MAX_DELETE_ABSOLUTE = 10; // 或绝对数 10，取较大者
+const MAX_DELETE_RATIO = 0.2;     // 单次 ingest 最多删除 20% 已有 chunk
+const MAX_DELETE_ABSOLUTE = 10;   // 或绝对数 10，取较大者
+const HARD_LIMIT_CHUNKS = 50_000; // 单仓 chunk 数硬上限
 ```
-超过阈值时：log error、跳过 delete、保留旧 chunk，但 toAdd 仍照常写入（结果是临时多余 chunk，下次正常 ingest 自然清理）。
+- **删除护栏**：超过阈值时 log error、跳过 delete、保留旧 chunk，toAdd 仍照常写入（临时重叠，下次 ingest 自然收敛）。
+- **chunk 数护栏**：`fetchCodeSummaryIndex` 累计扫到 `> HARD_LIMIT_CHUNKS` 时立即 abort 分页，强制 fallback 到全量路径（带显式告警 `fallback_reason='chunk_limit_exceeded'`），防止 ingest 函数 OOM 或超时。
 
 ---
 
@@ -184,10 +196,26 @@ Admin report 新增 KPI：
 | blobSha 与 file content 不一致（GitHub 历史 bug） | 用 content hash 作二级校验（可选 Phase 2） |
 | 已有数据缺 `lastIndexedSha`（早期 chunk） | 首次跑全量回填一次，之后稳态运行 |
 
-**回退**：ENV `RAG_FORCE_FULL_REINDEX=1` 一键退回旧行为，无 schema 锁定。
-
 ---
 
-## 9. Open Questions
-- [ ] 是否需要把 `commits` / `pr_summary` 等其他 chunk type 也增量化？建议 Phase 2 单独 spec。
-- [ ] 是否允许跨 commit 复用 chunk（同 blobSha 但 commitSha 不同）？默认 **允许**，因为内容相同；UI 上以 `commitSha` 列展示最近见到的版本即可。
+## 10. Review Comments & Suggestions (Gemini CLI)
+
+> 评审日期：2026-05-14。状态标记：✅ 已落地 / 📌 延后 / ❌ 驳回。
+
+### 10.1 版本控制增强 ✅ 已落地（§3.2 / §3.6）
+建议在 `ChunkMetadata` 中预留 `chunkerVersion: string` 字段。
+- **理由**：`schemaVersion` 仅代表数据结构变化，而 `chunkerVersion` 代表切分逻辑变化。
+- **处理**：新增 `chunkerVersion` 字段，并将其与 blobSha 一起列入「触发单文件重索引」的判定条件。
+
+### 10.2 Rename 优化路径 📌 延后到 Phase 2
+当前方案将 Rename 视为 `delete + add`。
+- **观察**：如果 blobSha 未变但路径变了，技术上可以只执行 `update_metadata`。
+- **处理**：Phase 1 维持 delete+add（安全性高、实现简单）；Phase 2 可识别 `oldPath.blobSha === newPath.blobSha` 转为更新操作。
+
+### 10.3 Paging 性能与限制 ✅ 已落地（§4.1）
+- **风险**：大仓产生 chunk 数量可能达 20k-40k。
+- **处理**：新增 `HARD_LIMIT_CHUNKS = 50000`，超出立即 abort 分页并 fallback 全量，带显式告警。
+
+### 10.4 状态同步一致性 ✅ 已落地（§3.3，P0）
+- **建议**：upsert 先于 delete，宁可召回重复，不可彻底丢失。
+- **处理**：流程图明确写入顺序约束，崩溃中态最多重叠，永远不会出现召回空洞。

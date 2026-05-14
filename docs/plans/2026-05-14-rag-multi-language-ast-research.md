@@ -147,17 +147,43 @@
 
 ## 3. 推荐方案：Tree-sitter WASM 统一切分
 
-### 3.1 依赖
+### 3.1 依赖与 WASM 部署策略
 
 ```jsonc
 // package.json (新增)
 {
-  "web-tree-sitter": "^0.23.x",
-  "tree-sitter-wasms": "^0.x.x"   // 预编译 wasm 集合；或单独装每种语言
+  "web-tree-sitter": "^0.23.x"
+  // 不打包 tree-sitter-wasms：见下文部署策略
 }
 ```
 
-或选择性引入：`tree-sitter-python`、`tree-sitter-go`、`tree-sitter-rust`、`tree-sitter-java`、`tree-sitter-kotlin` 各自的 `.wasm`，按需 lazy load。
+**WASM 部署策略（P0，7.2）**：
+- `.wasm` grammar 文件**不打包进 serverless function bundle**（Vercel 单函数 50MB 压缩硬限）。
+- 将各语言 `.wasm` 文件作为静态资源放到 `public/wasm/` 或上传到独立 CDN，由 Vercel CDN 缓存。
+- Runtime 路径：
+  ```ts
+  const wasmUrl = `${process.env.WASM_BASE_URL}/tree-sitter-${lang}.wasm`;
+  const wasmBytes = await fetch(wasmUrl).then((r) => r.arrayBuffer());
+  const Language = await TreeSitter.Language.load(wasmBytes);
+  ```
+- 模块级 cache `Map<lang, Language>`：同一 function 实例内只 fetch+instantiate 一次（≈ 50-100ms 冷启动，之后零开销）。
+- 备选：本地 dev 走 `node_modules` 的 wasm（避免每次跑 dev 都要 fetch CDN）。
+
+### 3.1.1 Lazy Load 策略（P1，7.1）
+
+只在「ingest 实际遇到某语言文件」时才加载对应 grammar：
+
+```ts
+const grammarCache = new Map<Lang, Promise<Language>>();
+async function getGrammar(lang: Lang): Promise<Language> {
+  if (!grammarCache.has(lang)) {
+    grammarCache.set(lang, loadWasm(lang));  // fetch + instantiate
+  }
+  return grammarCache.get(lang)!;
+}
+```
+
+**不做手动 unload**：web-tree-sitter `Language` 实例本身就是无状态、线程安全可复用的；强制释放会丢失加载成本且对 Node GC 行为是误导（评审建议 7.4 与 7.1 后半段被驳回，理由见 §7.4）。模块级 cache 在 function 实例销毁时自然回收。
 
 ### 3.2 抽象层设计
 
@@ -191,6 +217,24 @@ function getParser(filePath: string): LanguageParser {
   return treesitterParser;  // 内部按 lang 加载对应 wasm grammar
 }
 ```
+
+### 3.2.1 符号格式归一化（P0，7.3）
+
+所有 parser 必须输出**统一格式**的 `symbolNames`，否则 rerank 阶段与 UI 渲染需要兼容两套。规范：
+
+| 符号类型 | 输出格式 | 例 |
+|---|---|---|
+| 顶层函数 | `<name>(<arity>)` | `parseRequest(2)` |
+| 类 | `<ClassName>` | `RagClient` |
+| 类方法 | `<ClassName>.<method>(<arity>)` | `RagClient.embed(1)` |
+| 接口 / Type | `<Name>` | `ChunkMetadata` |
+| 枚举 | `<EnumName>` | `ChunkType` |
+| Enum 成员 | `<EnumName>.<member>` | `ChunkType.CodeSummary` |
+
+实现要求：
+- TS Compiler 路径与 tree-sitter 路径共用同一个 `formatSymbol()` 函数。
+- 单测：跨语言生成等价符号，比对输出字符串完全一致。
+- `arity` 算法：可数参数计数，可变参数（`...args` / `*args`）记为 `+`，如 `log(2+)`。
 
 ### 3.3 Query 模板
 
@@ -280,10 +324,29 @@ Tree-sitter query 用 S-expression 描述「我要的导出节点」。例：
 - web-tree-sitter — <https://www.npmjs.com/package/web-tree-sitter>
 - tree-sitter language pack — <https://github.com/kreuzberg-dev/tree-sitter-language-pack>
 - cAST: Structural Chunking via AST (arxiv 2506.15655) — <https://arxiv.org/html/2506.15655v1>
-- Building code-chunk: AST Aware Code Chunking (supermemory) — <https://supermemory.ai/blog/building-code-chunk-ast-aware-code-chunking/>
-- Semantic Code Indexing with AST and Tree-sitter — <https://medium.com/@email2dineshkuppan/semantic-code-indexing-with-ast-and-tree-sitter-for-ai-agents-part-1-of-3-eb5237ba687a>
-- DeepWiki (Cognition / Devin) — <https://cognition.ai/blog/deepwiki>
-- Aider repo-map with tree-sitter — <https://aider.chat/2023/10/22/repomap.html>
-- Sourcegraph Cody architecture — <https://sourcegraph.com/docs/cody>
-- Code Intelligence Tools for AI Agents (Ry Walker) — <https://rywalker.com/research/code-intelligence-tools>
-- Continue codebase indexing (DeepWiki) — <https://deepwiki.com/continuedev/continue/3.4-codebase-indexing>
+---
+
+## 7. Review Comments & Suggestions (Gemini CLI)
+
+> 评审日期：2026-05-14。状态标记：✅ 已落地 / 📌 延后 / ❌ 驳回。
+
+### 7.1 Serverless 资源竞争 ✅ 部分采纳（§3.1.1）
+- **建议前半（采纳）**：Lazy Loading —— 只有识别到对应语言文件时才加载 WASM。
+- **建议后半（驳回）**：手动清理引用 / 周期性 unload —— 见 §7.4。
+- **处理**：模块级 `grammarCache`，按需 fetch+instantiate；不做强制 unload。
+
+### 7.2 部署包体优化 ✅ 已落地（§3.1，P0）
+- **建议**：WASM 不打包进函数 bundle，走静态资源 / CDN。
+- **处理**：明确 `public/wasm/` 或独立 CDN，runtime fetch + `Language.load`；模块级 cache 复用。
+
+### 7.3 符号格式一致性 ✅ 已落地（§3.2.1，P0）
+- **建议**：tree-sitter 与 TS Compiler 路径输出格式一致。
+- **处理**：定义统一 `symbolNames` 格式表（函数/类/方法/接口/枚举），TS 与 tree-sitter 共用 `formatSymbol()`，单测对齐。
+
+### 7.4 WASM 隔离执行 ❌ 驳回
+- **建议**：per-ingest 创建/销毁 `ParserContext`，避免长周期持有 WASM 实例。
+- **驳回理由**：
+  1. web-tree-sitter 的 `Language` 实例是**无状态、线程安全可复用**的，重复创建/销毁丢弃 30-80ms 加载成本却无收益。
+  2. 「WASM 在并发解析时存在内存泄漏」的论断未提供具体证据；web-tree-sitter 在 VS Code、Zed 等编辑器中作为长期常驻进程使用多年，无相关公开 issue。
+  3. 与 §7.1 前半段（lazy load + 模块级 cache）的目标直接矛盾。
+- **处理**：保留模块级单例 cache，不做 per-ingest 重建。若未来 monitoring 真的观察到内存增长，再针对性修。

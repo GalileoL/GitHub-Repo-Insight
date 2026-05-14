@@ -83,6 +83,21 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
 
 `ConcurrencyPool`：简单实现，不引入额外依赖（拒绝引入 `p-limit`，保持 zero-dep 风格）。
 
+**关键不变式（P0）**：`activeCount` 必须在 `try/finally` 中归还，无论 job 成功、抛错、还是被外部 abort。否则一个未捕获异常会让 slot 永久泄露，整条 ingest 流水卡死。最小实现示意：
+```ts
+async run<T>(job: () => Promise<T>): Promise<T> {
+  await this.acquire();          // 等到有空 slot
+  try {
+    return await job();
+  } finally {
+    this.release();              // 必须放在 finally
+  }
+}
+```
+单测必须覆盖：连续 N 个 job 抛错，pool 仍能接受新 job 并清零 `activeCount`。
+
+**输入预切分（P1，9.1）**：在压入 pool 之前，对每个 batch 用 `char/4` 估算 token；若估算 > 6000 token，则按估算切成 2 份再入 pool。这是廉价的鲁棒性保险，不需要 tiktoken。tiktoken 精确校验留待 Phase 2。
+
 `embedOneBatchWithRetry`：
 ```ts
 async function embedOneBatchWithRetry(inputs: string[], timeoutMs: number): Promise<number[][]> {
@@ -110,6 +125,18 @@ async function embedOneBatchWithRetry(inputs: string[], timeoutMs: number): Prom
 | 单个 batch | 不进 pool，直接 await |
 | 任一 batch 最终失败 | 整个 `embedTexts` 抛错；不返回部分结果（避免静默丢向量） |
 | 超长单条 input（> 8191 token） | OpenAI 返回 400 → `EmbedError` 携带该 input 在原数组的 index |
+
+**`EmbedError` 形状（P1，9.4）**：
+```ts
+class EmbedError extends Error {
+  readonly batchStartIndex: number;   // batch 在原 texts 数组的起始 index
+  readonly batchEndIndex: number;     // 结束 index（不含）
+  readonly offendingInputIndex?: number; // 若能定位到具体违规条，填这里
+  readonly httpStatus?: number;
+  readonly cause?: unknown;
+}
+```
+Ingest orchestrator 收到 `EmbedError` 后可选择：a) 抛错整体失败；b) 在「容错模式」下跳过该 index 范围、记录到 eval 事件、继续索引其他文件。
 
 ---
 
@@ -175,10 +202,24 @@ async function embedOneBatchWithRetry(inputs: string[], timeoutMs: number): Prom
 | 顺序错乱（结果数组与 input 偏移） | 显式按 `idx+j` 写回；单测覆盖 |
 | ENV 配置异常（非数字/过大值） | `clamp(parsed, 1, 16)`，非法值 → 默认 4 + warn |
 
-**回退**：`RAG_EMBED_CONCURRENCY=1` 退化为串行行为，无需 revert 代码。
-
 ---
 
-## 8. Open Questions
-- [ ] 是否要在 batch 维度做 token 估算预校验（避免 400）？建议 Phase 2，结合 tiktoken 引入决策。
-- [ ] 是否需要全局跨请求的 embedding 队列（多个 ingest 同时跑时共享 RPM 配额）？serverless 场景下意义不大，暂不做。
+## 9. Review Comments & Suggestions (Gemini CLI)
+
+> 评审日期：2026-05-14。状态标记：✅ 已落地 / 📌 延后 / ❌ 部分驳回。
+
+### 9.1 Token 级预校验 ✅ 已落地（§3.2）
+- **建议**：在压入 pool 前用 `char/4` 估算，预估 > 6000 token 自动拆分。
+- **处理**：已写入实现示意；tiktoken 精确校验留待 Phase 2。
+
+### 9.2 ConcurrencyPool 健壮性 ✅ 已落地（§3.2，P0）
+- **建议**：activeCount 必须在异常时归零，否则卡死。
+- **处理**：明确 `try/finally release()` 不变式，单测必须覆盖「连续抛错 + 后续 job 仍可接受」。
+
+### 9.3 超时与退避的联动 ❌ 部分驳回
+- **建议前半（采纳）**：429 时下次重试调大 `timeoutMs` —— 合理，写入退避逻辑即可（每次重试 `timeoutMs *= 1.5`，封顶 60s）。
+- **建议后半（驳回）**：降权重 / 动态调整并发 —— 过度设计。固定 `MAX_CONCURRENCY=4` 已远低于 tier-1 RPM，429 走退避足够；引入权重池增加测试面与 bug 面。
+
+### 9.4 异常上下文捕获 ✅ 已落地（§3.4）
+- **建议**：`EmbedError` 必须携带 index 范围以支持容错模式。
+- **处理**：明确 `EmbedError` 字段形状（`batchStartIndex` / `batchEndIndex` / `offendingInputIndex`），orchestrator 可选择 fail-fast 或 skip-and-continue。
