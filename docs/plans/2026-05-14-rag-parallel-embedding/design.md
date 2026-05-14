@@ -51,6 +51,12 @@ const PRE_SPLIT_TOKEN_LIMIT = 6_000;   // char/4 estimate
 
 `clamp` returns `default=4` on `NaN` and emits a warn log.
 
+**Warn log format** (Gemini round-2 §14.1):
+- Invalid input: `[embedTexts] RAG_EMBED_CONCURRENCY="${raw}" invalid; using default 4`
+- Out of range: `[embedTexts] RAG_EMBED_CONCURRENCY="${raw}" clamped from ${raw} to ${used}`
+
+Both branches MUST include the raw input value so operators can distinguish "config not applied" from "config applied at clamped value".
+
 ## 4. ConcurrencyPool (`pool.ts`)
 
 Zero-dep, FIFO, slot-based.
@@ -96,6 +102,7 @@ Invariants:
 ## 5. Pre-split (REQ-3)
 
 ```ts
+// Recursion depth ≤ log2(BATCH) ≈ 9 — bounded by BATCH=512; no stack-overflow risk.
 function splitOversized(inputs: string[]): string[][] {
   const tokens = inputs.reduce((s, t) => s + t.length, 0) / 4;
   if (tokens <= PRE_SPLIT_TOKEN_LIMIT || inputs.length === 1) return [inputs];
@@ -256,5 +263,19 @@ Eval event `embed_batch` joins the existing eval bucket flow. Admin report adds:
 
 1. Land code with default `MAX_CONCURRENCY=4`.
 2. Observe `embed_batch` metrics for 24h.
-3. If 429 rate <1%, document option to tune up to 8 for power users.
+3. If 429 rate < 1%, document option to tune up to 8 for power users.
 4. Rollback path: set `RAG_EMBED_CONCURRENCY=1` to fully serialize without code revert.
+
+---
+
+## 14. Review Comments & Suggestions (Gemini CLI, round 2)
+
+> Status: ✅ applied / 📌 deferred / ❌ rejected.
+
+### 14.1 配置解析的可观测性 ✅ applied (§3, §8)
+- **建议**：clamp 失败时 `console.warn` 包含「原始输入值」+「实际使用值」。
+- **处理**：`clamp()` 的日志格式约定：`[embedTexts] RAG_EMBED_CONCURRENCY="${raw}" invalid; using default ${4}`，越界情况输出 `clamped from ${raw} to ${used}`。所有 warn 必须包含 raw 与 used。
+
+### 14.2 递归切分的深度限制 ✅ applied (§5)
+- **建议**：注释说明递归深度受 `BATCH` 上限保护。
+- **处理**：`splitOversized` 函数体上方添加注释：`// Recursion depth ≤ log2(BATCH) ≈ 9 — bounded by BATCH=512; no stack-overflow risk.`

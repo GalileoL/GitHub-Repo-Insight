@@ -293,3 +293,35 @@ export async function getParser(filePath: string): Promise<LanguageParser> {
 - WASM bundling — never bundle in function; always `public/` or CDN.
 - WASM cache lifecycle — module-level, reuse across calls within a function instance; no per-ingest teardown.
 - Regex fallback — retained permanently as load-failure path.
+
+---
+
+## 14. Review Comments & Suggestions (Gemini CLI, round 2)
+
+> Status: ✅ applied / 📌 deferred / ❌ rejected.
+
+### 14.1 内存与并发控制 ❌ rejected
+- **建议**：在 `getGrammar` 中加入互斥锁，防止并发调用重复 fetch 同一 WASM。
+- **驳回理由**：design §4 的 `grammarCache.set(lang, Promise)` **存的是 in-flight Promise，不是 resolved value**。任何并发对同一 `lang` 的 `getGrammar` 调用都会拿到同一个 Promise（map 命中即返回），fetch + instantiate 天然只发生一次。互斥锁是冗余设计，徒增复杂度。
+- **保留事实**：高并发 Ingest 下，若同时遇到 5 种语言，5 次 fetch 会并发进行 —— 这是期望行为，单语言的去重已由 Promise cache 保证。
+
+### 14.2 符号归一化的边界 ✅ applied — see §6.1 below
+
+---
+
+## 6.1 Symbol Normalization Rules (added per Gemini round-2 §14.2)
+
+`captureToSymbol()` MUST strip language-specific syntactic noise before building `SymbolDescriptor`:
+
+| Language | Noise to strip                                              | Example                                  |
+|----------|-------------------------------------------------------------|------------------------------------------|
+| Python   | Decorators (`@dataclass`, `@app.route(...)`, `@staticmethod`) | `@app.route("/x")\ndef handler():` → `handler` |
+| Python   | Async keyword (kept as a non-name flag, not in name)        | `async def fetch()` → `fetch`, with `isAsync: true` if ever needed |
+| Rust     | Attributes (`#[derive(...)]`, `#[inline]`)                  | `#[derive(Debug)] pub struct Foo` → `Foo` |
+| Rust     | Visibility modifiers (`pub`, `pub(crate)`)                  | filter-only, never part of the name      |
+| Java     | Annotations (`@Override`, `@Inject`)                        | `@Override public void run()` → `run`    |
+| Java     | Modifier soup (`public static final synchronized`)          | filter-only                              |
+| Kotlin   | Annotations (`@JvmStatic`), modifiers (`suspend`, `internal`)| `suspend fun fetch()` → `fetch`          |
+| Go       | (no decorators; just name)                                  | —                                        |
+
+The captured `@symbol.*` node in the `.scm` query MUST point to the identifier node only — never to the wrapping `decorated_definition` / `attribute_item` — so that `node.text` is already noise-free. Unit tests in `format.test.ts` MUST assert that decorated/annotated declarations produce identical symbol names to their bare counterparts.

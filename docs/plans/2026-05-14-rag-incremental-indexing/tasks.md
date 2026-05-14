@@ -94,6 +94,8 @@
   - Satisfies: AC-5
 - [ ] **T6.5** Integration test: bumping `CHUNKER_VERSION` in code causes all files to land in `toAdd`.
   - Satisfies: AC-6
+- [ ] **T6.6** Rename regression: a file moved from `oldPath` to `newPath` (same blobSha, different path) produces exactly **1 embedding call, 1 upsert (newPath), 1 delete (oldPath)** under Phase 1 rules. The chunk content at `newPath` is byte-identical to what `oldPath` previously held.
+  - Satisfies: Gemini CLI review suggestion (§10.2). NOTE: zero-embedding rename optimization is the Phase 2 target; this Phase 1 test pins down current behavior as a baseline so Phase 2 can assert the improvement.
 
 ## Phase 7 — Rollout & Docs
 

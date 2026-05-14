@@ -82,6 +82,11 @@
   - Satisfies: NFR-3, AC-8
 - [ ] **T6.5** Cold/warm parse-time benchmark: first python parse includes ~50–100 ms cold load; second is < 50 ms.
   - Satisfies: NFR-2, AC-9
+- [ ] **T6.6** Quality benchmark on real public repos.
+  - Method: pick 5 Python repos and 5 Go repos from a fixed allowlist (`scripts/quality-bench-repos.json`). For each repo, run extraction twice — once with `MULTI_LANG_AST_ENABLED=0` (regex), once with `=1` (tree-sitter). Diff the resulting `symbolNames` sets per file.
+  - Metric: per-language recall = `|tree_sitter_symbols ∩ regex_symbols| / |union|` — tree-sitter SHALL produce a strict superset, and SHALL discover ≥ 20% more total symbols than regex on the aggregate corpus (driven mostly by nested functions, decorated definitions, and missed modifiers).
+  - Output: `test/output/quality-bench-{date}.json` checked into a separate artifact branch (not main).
+  - Satisfies: Gemini CLI review suggestion; complements NFR-1 (gold-set ≥ 0.9) with real-world breadth.
 
 ## Phase 7 — Rollout & Docs
 
